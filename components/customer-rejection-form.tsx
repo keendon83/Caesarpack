@@ -18,12 +18,9 @@ import {
   unlockCustomerRejectionForm,
   deleteCustomerRejectionFormSubmission,
   updateCustomerRejectionFormSubmission,
-  uploadPdfToSupabase,
-  updatePdfUrlInSubmission,
 } from "@/app/actions"
 import { useRouter } from "next/navigation"
-import html2canvas from "html2canvas"
-import jsPDF from "jspdf"
+import { downloadCustomerRejectionPDF } from "@/lib/pdf-generator"
 
 interface CustomerRejectionFormProps {
   initialData?: any // For editing/viewing existing submissions
@@ -68,20 +65,59 @@ export function CustomerRejectionForm({
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false)
   const [isLocked, setIsLocked] = useState(initialData?.is_signed || false)
   const [isEditing, setIsEditing] = useState(false) // State for admin editing
+  const [authenticatedSigner, setAuthenticatedSigner] = useState<any>(null) // Store authenticated signer
+  const [isLoading, setIsLoading] = useState(true) // Add loading state
   const { toast } = useToast()
   const router = useRouter()
   const formRef = useRef<HTMLDivElement>(null) // Ref for the form content to be exported
 
-  const isCEO = currentUser?.role === "admin"
-  const canEdit = !isLocked || (isCEO && isEditing)
+  const canSign = currentUser?.role === "admin" || currentUser?.role === "ceo"
+  const canEdit = !isLocked || (canSign && isEditing)
   const currentCompany = currentUser?.company || "Caesarpack Holdings" // Default for placeholder
 
   useEffect(() => {
-    if (initialData) {
-      setFormData(initialData.submission_data)
-      setIsLocked(initialData.is_signed)
+    // Simulate loading and initialize form
+    const initializeForm = async () => {
+      try {
+        if (initialData) {
+          setFormData(initialData.submission_data)
+          setIsLocked(initialData.is_signed)
+        }
+        // Add a small delay to prevent flashing
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      } catch (error) {
+        console.error("Error initializing form:", error)
+      } finally {
+        setIsLoading(false)
+      }
     }
+
+    initializeForm()
   }, [initialData])
+
+  // Show loading state
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
+          <p className="text-muted-foreground">Loading form...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Show error if no current user (shouldn't happen due to page-level redirect)
+  if (!currentUser) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <p className="text-red-600 mb-4">Authentication required</p>
+          <Button onClick={() => router.push("/login")}>Go to Login</Button>
+        </div>
+      </div>
+    )
+  }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target
@@ -100,7 +136,13 @@ export function CustomerRejectionForm({
   }
 
   const handleSignatureSave = (dataUrl: string) => {
-    setFormData((prev) => ({ ...prev, [name]: dataUrl }))
+    setFormData((prev) => ({ ...prev, signature: dataUrl }))
+  }
+
+  // Handle authentication success from signature pad
+  const handleAuthSuccess = (user: any) => {
+    setAuthenticatedSigner(user)
+    console.log("Authenticated signer set:", user)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -152,9 +194,19 @@ export function CustomerRejectionForm({
       })
       return
     }
+    if (!authenticatedSigner) {
+      toast({
+        title: "Error",
+        description: "Please authenticate before signing.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    console.log("Signing form with authenticated signer:", authenticatedSigner)
 
     setIsSigning(true)
-    const result = await signCustomerRejectionForm(submissionId, formData.signature)
+    const result = await signCustomerRejectionForm(submissionId, formData.signature, authenticatedSigner.id)
     if (result.error) {
       toast({
         title: "Error",
@@ -164,12 +216,12 @@ export function CustomerRejectionForm({
     } else {
       toast({
         title: "Success",
-        description: "Form signed successfully!",
+        description: result.message || "Form signed successfully!",
       })
       setIsLocked(true)
       router.refresh()
-      // Automatically generate PDF after signing
-      await generateAndUploadPdf()
+      // Automatically generate PDF after signing using the unified generator
+      await generateUnifiedPdf()
     }
     setIsSigning(false)
   }
@@ -195,6 +247,7 @@ export function CustomerRejectionForm({
       })
       setIsLocked(false)
       setIsEditing(true) // Enter edit mode after unlocking
+      setAuthenticatedSigner(null) // Clear authenticated signer
       router.refresh()
     }
     setIsUnlocking(false)
@@ -224,96 +277,38 @@ export function CustomerRejectionForm({
     setIsDeleting(false)
   }
 
-  const generateAndUploadPdf = async () => {
-    if (!formRef.current || !submissionId) return
+  // UPDATED: Use the unified PDF generator
+  const generateUnifiedPdf = async () => {
+    if (!submissionId) return
 
     setIsGeneratingPdf(true)
     toast({
       title: "Generating PDF",
-      description: "Please wait while the PDF is being generated and uploaded...",
-      duration: 5000,
+      description: "Please wait while the PDF is being generated...",
+      duration: 3000,
     })
 
-    // Temporarily add a "locked" watermark for PDF generation if signed
-    const watermarkDiv = document.createElement("div")
-    if (isLocked) {
-      watermarkDiv.innerHTML = `
-        <div style="
-          position: absolute;
-          top: 50%;
-          left: 50%;
-          transform: translate(-50%, -50%) rotate(-45deg);
-          font-size: 80px;
-          color: rgba(0, 0, 0, 0.1);
-          font-weight: bold;
-          pointer-events: none;
-          z-index: 1000;
-          white-space: nowrap;
-        ">LOCKED</div>
-      `
-      formRef.current.style.position = "relative" // Ensure watermark is positioned correctly
-      formRef.current.appendChild(watermarkDiv)
-    }
-
     try {
-      const canvas = await html2canvas(formRef.current, {
-        scale: 2, // Increase scale for better quality
-        useCORS: true, // Important for images like company logo
-        allowTaint: true, // Allow tainting for cross-origin images if necessary
+      // Create submission object in the format expected by the PDF generator
+      const submissionForPdf = {
+        id: submissionId,
+        submission_data: formData,
+        company: currentUser.company,
+        is_signed: isLocked,
+        signed_at: initialData?.signed_at,
+        signed_by_user_full_name: initialData?.signed_by_user?.full_name || authenticatedSigner?.full_name,
+        users: { full_name: currentUser.full_name },
+        created_at: initialData?.created_at || new Date().toISOString(),
+      }
+
+      const filename = downloadCustomerRejectionPDF(submissionForPdf)
+
+      toast({
+        title: "PDF Generated Successfully",
+        description: `The PDF has been downloaded as ${filename}`,
       })
-
-      const imgData = canvas.toDataURL("image/png")
-      const pdf = new jsPDF("p", "mm", "a4")
-      const imgWidth = 210 // A4 width in mm
-      const pageHeight = 297 // A4 height in mm
-      const imgHeight = (canvas.height * imgWidth) / canvas.width
-      let heightLeft = imgHeight
-
-      let position = 0
-
-      pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight)
-      heightLeft -= pageHeight
-
-      while (heightLeft >= 0) {
-        position = heightLeft - imgHeight
-        pdf.addPage()
-        pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight)
-        heightLeft -= pageHeight
-      }
-
-      const pdfBlob = pdf.output("blob")
-      const reader = new FileReader()
-      reader.readAsDataURL(pdfBlob)
-      reader.onloadend = async () => {
-        const base64Pdf = reader.result as string
-        const filename = `CP-RJ-01-${submissionId}.pdf`
-        const uploadResult = await uploadPdfToSupabase(base64Pdf, filename)
-
-        if (uploadResult.error) {
-          toast({
-            title: "PDF Upload Error",
-            description: uploadResult.error,
-            variant: "destructive",
-          })
-        } else if (uploadResult.publicUrl) {
-          const updateResult = await updatePdfUrlInSubmission(submissionId, uploadResult.publicUrl)
-          if (updateResult.error) {
-            toast({
-              title: "Database Update Error",
-              description: updateResult.error,
-              variant: "destructive",
-            })
-          } else {
-            toast({
-              title: "PDF Generated & Uploaded",
-              description: "The PDF has been successfully generated and uploaded.",
-            })
-            router.refresh()
-          }
-        }
-      }
     } catch (error: any) {
-      console.error("Error generating or uploading PDF:", error)
+      console.error("Error generating PDF:", error)
       toast({
         title: "PDF Generation Failed",
         description: error.message || "An unexpected error occurred during PDF generation.",
@@ -321,10 +316,6 @@ export function CustomerRejectionForm({
       })
     } finally {
       setIsGeneratingPdf(false)
-      if (watermarkDiv.parentNode) {
-        formRef.current?.removeChild(watermarkDiv) // Remove watermark after generation
-        formRef.current!.style.position = "" // Reset position
-      }
     }
   }
 
@@ -339,18 +330,19 @@ export function CustomerRejectionForm({
           </div>
         </div>
         {submissionId && (
-          <div className="flex gap-2">
-            {isLocked && initialData?.pdf_url && (
-              <Button asChild variant="outline" disabled={isGeneratingPdf}>
-                <a href={initialData.pdf_url} target="_blank" rel="noopener noreferrer">
-                  <Download className="mr-2 h-4 w-4" /> Download PDF
-                </a>
+          <div className="flex gap-2 relative z-50">
+            {/* Manual PDF Generation Button - Available for signed forms */}
+            {isLocked && (
+              <Button onClick={generateUnifiedPdf} disabled={isGeneratingPdf} variant="outline">
+                {isGeneratingPdf && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                <Download className="mr-2 h-4 w-4" />
+                {isGeneratingPdf ? "Generating..." : "Download PDF"}
               </Button>
             )}
-            {isCEO && isLocked && (
+            {canSign && isLocked && (
               <>
                 <Button onClick={() => setIsEditing(true)} disabled={isEditing}>
-                  <Edit className="mr-2 h-4 w-4" /> Edit (Admin)
+                  <Edit className="mr-2 h-4 w-4" /> Edit
                 </Button>
                 <Button variant="outline" onClick={handleUnlockForm} disabled={isUnlocking}>
                   {isUnlocking && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -358,7 +350,7 @@ export function CustomerRejectionForm({
                 </Button>
               </>
             )}
-            {isCEO && (
+            {canSign && (
               <Button variant="destructive" onClick={handleDeleteForm} disabled={isDeleting}>
                 {isDeleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 <Trash2 className="mr-2 h-4 w-4" /> Delete
@@ -368,9 +360,10 @@ export function CustomerRejectionForm({
         )}
       </CardHeader>
       <form onSubmit={handleSubmit}>
-        <CardContent className="space-y-6" ref={formRef}>
+        <CardContent className="space-y-6 relative" ref={formRef}>
+          {/* FIXED: Moved watermark to only show in form content area, not over buttons */}
           {isLocked && (
-            <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-10">
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
               <div className="text-8xl font-bold text-gray-200 rotate-[-45deg] select-none">LOCKED</div>
             </div>
           )}
@@ -616,9 +609,16 @@ export function CustomerRejectionForm({
           </div>
 
           <h3 className="text-lg font-semibold mt-6 mb-2">CEO Approval</h3>
+          <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
+            <p className="text-sm text-blue-700">
+              <strong>Authentication Required:</strong> Only CEOs and administrators can sign this form. The CEO can
+              sign from any user account by authenticating with their own credentials.
+            </p>
+          </div>
           <div className="flex flex-col items-center gap-4">
             <AuthenticatedSignaturePad
               onSave={handleSignatureSave}
+              onAuthSuccess={handleAuthSuccess}
               initialSignature={formData.signature}
               readOnly={propReadOnly}
               isLocked={isLocked}
@@ -628,7 +628,7 @@ export function CustomerRejectionForm({
             />
           </div>
         </CardContent>
-        <CardFooter className="flex justify-end gap-2">
+        <CardFooter className="flex justify-end gap-2 relative z-50">
           {submissionId ? (
             <>
               {canEdit && (
@@ -637,8 +637,8 @@ export function CustomerRejectionForm({
                   {isEditing ? "Save Changes" : "Submit Update"}
                 </Button>
               )}
-              {!isLocked && isCEO && (
-                <Button onClick={handleSignForm} disabled={isSigning || !formData.signature}>
+              {!isLocked && (
+                <Button onClick={handleSignForm} disabled={isSigning || !formData.signature || !authenticatedSigner}>
                   {isSigning && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   <Lock className="mr-2 h-4 w-4" /> Sign Form
                 </Button>

@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { Package2, Home, FileText, Users, Settings, Database } from "lucide-react"
+import { Package2, Home, FileText, Users, Settings, Database, Bug } from "lucide-react"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 
@@ -71,6 +71,16 @@ export function Sidebar({ userRole }: { userRole: string }) {
                 >
                   <Database className="h-4 w-4" />
                   Database
+                </Link>
+                <Link
+                  href="/admin/debug"
+                  className={cn(
+                    "flex items-center gap-3 rounded-lg px-3 py-2 text-muted-foreground transition-all hover:text-primary",
+                    pathname.startsWith("/admin/debug") && "bg-muted text-primary",
+                  )}
+                >
+                  <Bug className="h-4 w-4" />
+                  Debug
                 </Link>
               </>
             )}

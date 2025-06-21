@@ -1,7 +1,13 @@
 import { CustomerRejectionForm } from "@/components/customer-rejection-form"
 import { getCurrentUser, getCustomerRejectionFormSubmission } from "@/app/actions"
+import { redirect } from "next/navigation"
 
 export default async function ViewCustomerRejectionPage({ params }: { params: { id: string } }) {
+  // Handle the "new" route case - redirect to the proper new form page
+  if (params.id === "new") {
+    redirect("/forms/customer-rejection/new")
+  }
+
   const user = await getCurrentUser()
   const submissionResult = await getCustomerRejectionFormSubmission(params.id)
 

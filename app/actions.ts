@@ -8,6 +8,291 @@ import { cookies } from "next/headers"
 
 const saltRounds = 10
 
+// Add this debug function to investigate the submissions
+export async function debugFormSubmissions() {
+  try {
+    console.log("=== DEBUG: Investigating form submissions ===")
+
+    // Get all form submissions with detailed info
+    const submissions = await sql`
+      SELECT
+        fs.id,
+        fs.user_id,
+        fs.form_id,
+        fs.company,
+        fs.is_signed,
+        fs.created_at,
+        fs.submission_data->>'serialNumber' as serial_number,
+        fs.submission_data->>'customerName' as customer_name,
+        u.full_name AS user_full_name,
+        u.username AS username,
+        f.name as form_name,
+        f.slug as form_slug
+      FROM public.form_submissions fs
+      JOIN public.users u ON fs.user_id = u.id
+      JOIN public.forms f ON fs.form_id = f.id
+      ORDER BY fs.created_at DESC;
+    `
+
+    console.log("Total submissions found:", submissions.length)
+    console.log("Submissions details:", submissions)
+
+    // Group by user to see who created what
+    const submissionsByUser = submissions.reduce((acc: any, sub: any) => {
+      const key = sub.username
+      if (!acc[key]) {
+        acc[key] = []
+      }
+      acc[key].push({
+        id: sub.id,
+        serial_number: sub.serial_number,
+        customer_name: sub.customer_name,
+        created_at: sub.created_at,
+        is_signed: sub.is_signed,
+      })
+      return acc
+    }, {})
+
+    console.log("Submissions grouped by user:", submissionsByUser)
+
+    return {
+      total: submissions.length,
+      submissions: submissions,
+      byUser: submissionsByUser,
+    }
+  } catch (error: any) {
+    console.error("Error debugging form submissions:", error)
+    return { error: error.message }
+  }
+}
+
+// Add function to clean up duplicate submissions
+export async function cleanupDuplicateSubmissions() {
+  try {
+    console.log("=== CLEANUP: Removing duplicate submissions ===")
+
+    // Find duplicates based on serial number and customer name
+    const duplicates = await sql`
+      WITH ranked_submissions AS (
+        SELECT 
+          id,
+          submission_data->>'serialNumber' as serial_number,
+          submission_data->>'customerName' as customer_name,
+          created_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY 
+              submission_data->>'serialNumber',
+              submission_data->>'customerName'
+            ORDER BY created_at ASC
+          ) as rn
+        FROM public.form_submissions
+        WHERE submission_data->>'serialNumber' IS NOT NULL
+        AND submission_data->>'customerName' IS NOT NULL
+      )
+      SELECT id, serial_number, customer_name, created_at
+      FROM ranked_submissions 
+      WHERE rn > 1;
+    `
+
+    console.log("Found duplicates:", duplicates)
+
+    if (duplicates.length > 0) {
+      // Delete the duplicates (keeping the first one of each group)
+      for (const duplicate of duplicates) {
+        await sql`DELETE FROM public.form_submissions WHERE id = ${duplicate.id};`
+        console.log(`Deleted duplicate submission: ${duplicate.id} (${duplicate.customer_name})`)
+      }
+    }
+
+    revalidatePath("/forms/customer-rejection")
+    return {
+      success: true,
+      deletedCount: duplicates.length,
+      deletedSubmissions: duplicates,
+    }
+  } catch (error: any) {
+    console.error("Error cleaning up duplicates:", error)
+    return { error: error.message }
+  }
+}
+
+// NEW: Add analytics function for customer rejection data
+export async function getCustomerRejectionAnalytics(fromDate?: string, toDate?: string) {
+  try {
+    console.log("Fetching customer rejection analytics...", { fromDate, toDate })
+
+    // Get the customer rejection form ID
+    const [formEntry] = await sql`SELECT id FROM public.forms WHERE slug = 'customer-rejection';`
+
+    if (!formEntry) {
+      return { error: "Customer rejection form not found." }
+    }
+
+    console.log("Form ID found:", formEntry.id)
+
+    // First, get all submissions for the form
+    let submissions
+    if (fromDate && toDate) {
+      submissions = await sql`
+        SELECT
+          fs.id,
+          fs.submission_data,
+          fs.created_at,
+          CAST(COALESCE(fs.submission_data->>'totalDiscount', '0') AS NUMERIC) as total_discount
+        FROM public.form_submissions fs
+        WHERE fs.form_id = ${formEntry.id}
+        AND fs.created_at >= ${fromDate}::date 
+        AND fs.created_at <= ${toDate}::date + interval '1 day'
+        AND fs.submission_data->>'totalDiscount' IS NOT NULL
+        AND fs.submission_data->>'totalDiscount' != ''
+        ORDER BY fs.created_at DESC;
+      `
+    } else if (fromDate) {
+      submissions = await sql`
+        SELECT
+          fs.id,
+          fs.submission_data,
+          fs.created_at,
+          CAST(COALESCE(fs.submission_data->>'totalDiscount', '0') AS NUMERIC) as total_discount
+        FROM public.form_submissions fs
+        WHERE fs.form_id = ${formEntry.id}
+        AND fs.created_at >= ${fromDate}::date
+        AND fs.submission_data->>'totalDiscount' IS NOT NULL
+        AND fs.submission_data->>'totalDiscount' != ''
+        ORDER BY fs.created_at DESC;
+      `
+    } else if (toDate) {
+      submissions = await sql`
+        SELECT
+          fs.id,
+          fs.submission_data,
+          fs.created_at,
+          CAST(COALESCE(fs.submission_data->>'totalDiscount', '0') AS NUMERIC) as total_discount
+        FROM public.form_submissions fs
+        WHERE fs.form_id = ${formEntry.id}
+        AND fs.created_at <= ${toDate}::date + interval '1 day'
+        AND fs.submission_data->>'totalDiscount' IS NOT NULL
+        AND fs.submission_data->>'totalDiscount' != ''
+        ORDER BY fs.created_at DESC;
+      `
+    } else {
+      submissions = await sql`
+        SELECT
+          fs.id,
+          fs.submission_data,
+          fs.created_at,
+          CAST(COALESCE(fs.submission_data->>'totalDiscount', '0') AS NUMERIC) as total_discount
+        FROM public.form_submissions fs
+        WHERE fs.form_id = ${formEntry.id}
+        AND fs.submission_data->>'totalDiscount' IS NOT NULL
+        AND fs.submission_data->>'totalDiscount' != ''
+        ORDER BY fs.created_at DESC;
+      `
+    }
+
+    console.log("Raw submissions data:", submissions)
+
+    if (!Array.isArray(submissions)) {
+      console.error("Submissions is not an array:", submissions)
+      return { error: "Failed to fetch submissions data." }
+    }
+
+    // Group by department and calculate totals
+    const departmentTotals: { [key: string]: { total: number; count: number; submissions: any[] } } = {}
+    let grandTotal = 0
+    let totalSubmissions = 0
+
+    // Process each submission
+    for (const submission of submissions) {
+      const discount = Number.parseFloat(submission.total_discount?.toString() || "0") || 0
+      const responsibleDepartments = submission.submission_data?.responsibleDepartment || []
+
+      console.log("Processing submission:", {
+        id: submission.id,
+        discount,
+        departments: responsibleDepartments,
+      })
+
+      // Handle case where responsibleDepartment might be a string or array
+      let departments: string[] = []
+      if (Array.isArray(responsibleDepartments)) {
+        departments = responsibleDepartments
+      } else if (typeof responsibleDepartments === "string") {
+        departments = [responsibleDepartments]
+      }
+
+      // If no departments specified, use "Unspecified"
+      if (departments.length === 0) {
+        departments = ["Unspecified"]
+      }
+
+      // Add to each responsible department
+      for (const department of departments) {
+        if (!departmentTotals[department]) {
+          departmentTotals[department] = { total: 0, count: 0, submissions: [] }
+        }
+
+        departmentTotals[department].total += discount
+        departmentTotals[department].count += 1
+        departmentTotals[department].submissions.push({
+          id: submission.id,
+          created_at: submission.created_at,
+          total_discount: discount,
+          serial_number: submission.submission_data?.serialNumber,
+          customer_name: submission.submission_data?.customerName,
+        })
+      }
+
+      grandTotal += discount
+      totalSubmissions += 1
+    }
+
+    // Sort departments by total amount (highest first)
+    const sortedDepartments = Object.entries(departmentTotals)
+      .sort(([, a], [, b]) => b.total - a.total)
+      .reduce(
+        (acc, [dept, data]) => {
+          acc[dept] = data
+          return acc
+        },
+        {} as typeof departmentTotals,
+      )
+
+    // Get monthly breakdown
+    const monthlyData: { [key: string]: number } = {}
+    for (const submission of submissions) {
+      const month = new Date(submission.created_at).toISOString().slice(0, 7) // YYYY-MM format
+      const discount = Number.parseFloat(submission.total_discount?.toString() || "0") || 0
+      monthlyData[month] = (monthlyData[month] || 0) + discount
+    }
+
+    console.log("Processed analytics:", {
+      departmentTotals: sortedDepartments,
+      grandTotal,
+      totalSubmissions,
+      monthlyData,
+    })
+
+    return {
+      departmentTotals: sortedDepartments,
+      grandTotal,
+      totalSubmissions,
+      monthlyData,
+      dateRange: { fromDate, toDate },
+    }
+  } catch (error: any) {
+    console.error("Error fetching customer rejection analytics:", error)
+    return {
+      error: error.message || "Failed to fetch analytics.",
+      departmentTotals: {},
+      grandTotal: 0,
+      totalSubmissions: 0,
+      monthlyData: {},
+      dateRange: { fromDate, toDate },
+    }
+  }
+}
+
 // --- Signature Authentication Function ---
 export async function authenticateForSignature(username: string, password: string) {
   console.log("Signature authentication attempt for username:", username)
@@ -32,13 +317,14 @@ export async function authenticateForSignature(username: string, password: strin
       return { error: "Invalid username or password." }
     }
 
-    // Check if user has admin role (can sign forms)
-    if (user.role !== "admin") {
-      console.log("User does not have admin privileges for signing:", username)
-      return { error: "Only administrators can sign forms." }
+    // Check if user has admin or ceo role (can sign forms)
+    if (user.role !== "admin" && user.role !== "ceo") {
+      console.log("User does not have signing privileges:", username, "Role:", user.role)
+      return { error: "Only administrators and CEOs can sign forms." }
     }
 
     console.log("Signature authentication successful for:", user.full_name)
+    console.log("Cross-account signing enabled - authenticated user can sign from any account")
 
     return {
       user: {
@@ -158,7 +444,8 @@ export async function initializeDatabase() {
       DO $$ BEGIN
         CREATE TYPE user_role_enum AS ENUM (
           'admin',
-          'employee'
+          'employee',
+          'ceo'
         );
       EXCEPTION
         WHEN duplicate_object THEN null;
@@ -232,16 +519,44 @@ export async function initializeDatabase() {
   }
 }
 
-// --- Auth Actions (Temporary implementation) ---
+// Add this new function after the initializeDatabase function
+export async function addCeoRoleToEnum() {
+  try {
+    console.log("Adding CEO role to user_role_enum...")
+
+    // Check if the enum value already exists
+    const existingValues = await sql`
+      SELECT enumlabel 
+      FROM pg_enum 
+      WHERE enumtypid = (
+        SELECT oid 
+        FROM pg_type 
+        WHERE typname = 'user_role_enum'
+      );
+    `
+
+    const hasRole = existingValues.some((row: any) => row.enumlabel === "ceo")
+
+    if (!hasRole) {
+      await sql`ALTER TYPE user_role_enum ADD VALUE 'ceo';`
+      console.log("CEO role added successfully!")
+    } else {
+      console.log("CEO role already exists")
+    }
+
+    return { success: true }
+  } catch (error: any) {
+    console.error("Error adding CEO role:", error)
+    return { error: error.message || "Failed to add CEO role." }
+  }
+}
+
+// --- Auth Actions (Updated implementation) ---
 export async function signIn(formData: FormData) {
   const username = formData.get("username") as string
   const password = formData.get("password") as string
 
   console.log("Sign In attempt for username:", username)
-
-  // Don't wrap redirect in try-catch to avoid catching the redirect error
-  let shouldRedirect = false
-  let userToStore = null
 
   try {
     // Try to find user in database
@@ -251,52 +566,44 @@ export async function signIn(formData: FormData) {
       WHERE username = ${username};
     `
 
-    if (user) {
-      // Verify password
-      const passwordMatch = await bcrypt.compare(password, user.password_hash)
-      if (passwordMatch) {
-        userToStore = {
-          id: user.id,
-          username: user.username,
-          full_name: user.full_name,
-          email: user.email,
-          company: user.company,
-          role: user.role,
-        }
-        console.log("Login successful for:", user.full_name)
-        shouldRedirect = true
-      } else {
-        console.log("Invalid password for user:", username)
-        shouldRedirect = true // For now, still redirect (temporary)
-      }
-    } else {
+    if (!user) {
       console.log("User not found:", username)
-      shouldRedirect = true // For now, still redirect (temporary)
+      return { error: "Invalid username or password." }
     }
-  } catch (error) {
+
+    // Verify password
+    const passwordMatch = await bcrypt.compare(password, user.password_hash)
+    if (!passwordMatch) {
+      console.log("Invalid password for user:", username)
+      return { error: "Invalid username or password." }
+    }
+
+    // Set session cookie for successful authentication
+    const userToStore = {
+      id: user.id,
+      username: user.username,
+      full_name: user.full_name,
+      email: user.email,
+      company: user.company,
+      role: user.role,
+    }
+
+    const cookieStore = await cookies()
+    cookieStore.set("user_session", JSON.stringify(userToStore), {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 60 * 60 * 24 * 7, // 7 days
+    })
+
+    console.log("Login successful for:", user.full_name)
+  } catch (error: any) {
     console.error("Error during database query:", error)
-    shouldRedirect = true // For now, still redirect (temporary)
+    return { error: "Authentication failed. Please try again." }
   }
 
-  // Set session cookie if user authenticated successfully
-  if (userToStore) {
-    try {
-      const cookieStore = await cookies()
-      cookieStore.set("user_session", JSON.stringify(userToStore), {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        maxAge: 60 * 60 * 24 * 7, // 7 days
-      })
-    } catch (cookieError) {
-      console.error("Error setting cookie:", cookieError)
-    }
-  }
-
-  // Redirect outside of try-catch block
-  if (shouldRedirect) {
-    redirect("/dashboard")
-  }
+  // Redirect to dashboard on successful login
+  redirect("/dashboard")
 }
 
 export async function signOut() {
@@ -306,31 +613,26 @@ export async function signOut() {
   redirect("/login")
 }
 
+// UPDATED: Enhanced debugging for getCurrentUser
 export async function getCurrentUser() {
   try {
     const cookieStore = await cookies()
     const userSession = cookieStore.get("user_session")
 
+    console.log("getCurrentUser called - Session exists:", !!userSession)
+
     if (userSession) {
       const user = JSON.parse(userSession.value)
-      console.log("Retrieved user from session:", user.username)
+      console.log("Retrieved user from session:", user.username, "Role:", user.role)
       return user
     }
   } catch (error) {
     console.error("Error getting user from session:", error)
   }
 
-  // TEMPORARY: Return a dummy user if no session found
-  // This ensures the app still works during development
-  console.log("No user session found, returning dummy user")
-  return {
-    id: "dummy-user-id",
-    full_name: "Demo User",
-    username: "demo",
-    email: "demo@example.com",
-    company: "Caesarpack Holdings",
-    role: "admin", // Default to admin for initial preview access
-  }
+  // Return null if no valid session found
+  console.log("No user session found - user not authenticated")
+  return null
 }
 
 // --- User Management Actions (Now using Neon) ---
@@ -535,6 +837,21 @@ export async function submitCustomerRejectionForm(formData: any) {
       return { error: "Form not found." }
     }
 
+    // Check for existing submission with same serial number and customer name to prevent duplicates
+    if (formData.serialNumber && formData.customerName) {
+      const existingSubmission = await sql`
+        SELECT id FROM public.form_submissions 
+        WHERE form_id = ${formEntry.id}
+        AND submission_data->>'serialNumber' = ${formData.serialNumber}
+        AND submission_data->>'customerName' = ${formData.customerName}
+        LIMIT 1;
+      `
+
+      if (existingSubmission.length > 0) {
+        return { error: "A submission with this serial number and customer name already exists." }
+      }
+    }
+
     console.log("Attempting to insert form submission with data:", {
       user_id: currentUser.id,
       form_id: formEntry.id,
@@ -577,6 +894,7 @@ export async function getCustomerRejectionFormSubmissions() {
 
     console.log("Querying submissions for form_id:", formEntry.id)
 
+    // Update the SQL query to properly get the signer information:
     const submissions = await sql`
       SELECT
         fs.id,
@@ -588,18 +906,24 @@ export async function getCustomerRejectionFormSubmissions() {
         fs.created_at,
         u.full_name AS user_full_name,
         u.company AS user_company,
-        u.role AS user_role
+        u.role AS user_role,
+        signer.full_name AS signed_by_user_full_name,
+        signer.role AS signed_by_user_role
       FROM public.form_submissions fs
       JOIN public.users u ON fs.user_id = u.id
+      LEFT JOIN public.users signer ON fs.signed_by = signer.id
       WHERE fs.form_id = ${formEntry.id}
       ORDER BY fs.created_at DESC;
     `
 
     console.log("Raw submissions query result:", submissions)
 
+    // And update the formatted submissions to include the signer info:
     const formattedSubmissions = submissions.map((s: any) => ({
       ...s,
       users: { full_name: s.user_full_name, company: s.user_company, role: s.user_role },
+      signed_by_user_full_name: s.signed_by_user_full_name,
+      signed_by_user_role: s.signed_by_user_role,
     }))
 
     console.log("Formatted submissions:", formattedSubmissions)
@@ -665,26 +989,58 @@ export async function getCustomerRejectionFormSubmission(id: string) {
   }
 }
 
-export async function signCustomerRejectionForm(id: string, signatureData: string) {
-  const currentUser = await getCurrentUser() // Now uses session-based user
-
-  if (!currentUser || currentUser.role !== "admin") {
-    return { error: "Unauthorized to sign this form." }
-  }
+// FIXED: This function now accepts the authenticated signer's ID instead of using current user
+export async function signCustomerRejectionForm(id: string, signatureData: string, authenticatedSignerId: string) {
+  console.log("signCustomerRejectionForm called with:", {
+    submissionId: id,
+    authenticatedSignerId: authenticatedSignerId,
+    hasSignature: !!signatureData,
+  })
 
   try {
+    // Verify the authenticated signer exists and has proper role
+    const [signer] = await sql`
+      SELECT id, full_name, username, role 
+      FROM public.users 
+      WHERE id = ${authenticatedSignerId};
+    `
+
+    if (!signer) {
+      console.log("Authenticated signer not found:", authenticatedSignerId)
+      return { error: "Authenticated signer not found." }
+    }
+
+    if (signer.role !== "admin" && signer.role !== "ceo") {
+      console.log("Signer does not have proper role:", signer.role)
+      return { error: "Only administrators and CEOs can sign forms." }
+    }
+
+    console.log("Signing form with authenticated user:", signer.full_name, "Role:", signer.role)
+
     const [updatedSubmission] = await sql`
       UPDATE public.form_submissions
       SET
         is_signed = TRUE,
-        signed_by = ${currentUser.id},
+        signed_by = ${authenticatedSignerId},
         signed_at = NOW(),
         submission_data = jsonb_set(submission_data, '{signature}', ${JSON.stringify(signatureData)}::jsonb)
       WHERE id = ${id}
-      RETURNING id;
+      RETURNING id, is_signed, signed_at;
     `
+
+    console.log("Form signing result:", updatedSubmission)
+
+    if (!updatedSubmission) {
+      return { error: "Failed to update form submission." }
+    }
+
     revalidatePath(`/forms/customer-rejection/${id}`)
-    return { data: updatedSubmission }
+    revalidatePath("/forms/customer-rejection")
+
+    return {
+      data: updatedSubmission,
+      message: `Form signed successfully by ${signer.full_name}`,
+    }
   } catch (error: any) {
     console.error("Error signing form in Neon:", error)
     return { error: error.message || "Failed to sign form." }
@@ -745,25 +1101,82 @@ export async function updateCustomerRejectionFormSubmission(id: string, formData
   }
 }
 
-// Placeholder for PDF upload (Supabase Storage is no longer used)
+// Simplified PDF handling - no external storage needed
 export async function uploadPdfToSupabase(base64Pdf: string, filename: string) {
+  // This function is no longer needed since we're downloading PDFs directly
   return {
-    error: "PDF upload to Supabase Storage is no longer supported. You need to implement a new storage solution.",
+    success: true,
+    message: "PDF generated and downloaded directly to user's device",
   }
 }
 
 export async function updatePdfUrlInSubmission(submissionId: string, pdfUrl: string) {
+  // This function is no longer needed since we're not storing PDF URLs
+  return {
+    success: true,
+    message: "PDF downloaded directly, no URL storage needed",
+  }
+}
+
+// Add this function to clean up all duplicates right now
+export async function removeAllDuplicateSubmissions() {
   try {
-    const [updatedSubmission] = await sql`
-      UPDATE public.form_submissions
-      SET pdf_url = ${pdfUrl}
-      WHERE id = ${submissionId}
-      RETURNING id;
+    console.log("=== REMOVING ALL DUPLICATE SUBMISSIONS ===")
+
+    // Get all submissions
+    const allSubmissions = await sql`
+      SELECT 
+        id,
+        submission_data->>'serialNumber' as serial_number,
+        submission_data->>'customerName' as customer_name,
+        created_at,
+        user_id
+      FROM public.form_submissions
+      ORDER BY created_at ASC;
     `
-    revalidatePath(`/forms/customer-rejection/${submissionId}`)
-    return { data: updatedSubmission }
+
+    console.log("All submissions:", allSubmissions)
+
+    // Group by serial number and customer name
+    const groups: { [key: string]: any[] } = {}
+
+    for (const submission of allSubmissions) {
+      const key = `${submission.serial_number}-${submission.customer_name}`
+      if (!groups[key]) {
+        groups[key] = []
+      }
+      groups[key].push(submission)
+    }
+
+    let deletedCount = 0
+    const deletedIds: string[] = []
+
+    // For each group, keep only the first one (oldest) and delete the rest
+    for (const [key, submissions] of Object.entries(groups)) {
+      if (submissions.length > 1) {
+        console.log(`Found ${submissions.length} duplicates for ${key}`)
+
+        // Keep the first one, delete the rest
+        for (let i = 1; i < submissions.length; i++) {
+          const submissionToDelete = submissions[i]
+          await sql`DELETE FROM public.form_submissions WHERE id = ${submissionToDelete.id};`
+          deletedIds.push(submissionToDelete.id)
+          deletedCount++
+          console.log(`Deleted duplicate submission: ${submissionToDelete.id}`)
+        }
+      }
+    }
+
+    revalidatePath("/forms/customer-rejection")
+
+    return {
+      success: true,
+      deletedCount,
+      deletedIds,
+      message: `Removed ${deletedCount} duplicate submissions`,
+    }
   } catch (error: any) {
-    console.error("Error updating PDF URL in submission in Neon:", error)
-    return { error: error.message || "Failed to update PDF URL." }
+    console.error("Error removing duplicates:", error)
+    return { error: error.message }
   }
 }

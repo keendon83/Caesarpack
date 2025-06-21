@@ -12,6 +12,7 @@ interface AuthenticatedSignaturePadProps {
   width?: number
   height?: number
   onSave: (dataUrl: string) => void
+  onAuthSuccess?: (authenticatedUser: any) => void // Add this prop
   initialSignature?: string | null
   readOnly?: boolean
   className?: string
@@ -24,6 +25,7 @@ export function AuthenticatedSignaturePad({
   width = 400,
   height = 200,
   onSave,
+  onAuthSuccess,
   initialSignature,
   readOnly = false,
   className,
@@ -38,6 +40,10 @@ export function AuthenticatedSignaturePad({
   const handleAuthSuccess = (user: any) => {
     setIsAuthenticated(true)
     setAuthenticatedUser(user)
+    // Call the parent callback if provided
+    if (onAuthSuccess) {
+      onAuthSuccess(user)
+    }
   }
 
   const handleSignaturePadClick = () => {
@@ -63,10 +69,15 @@ export function AuthenticatedSignaturePad({
         <div className="flex items-center gap-2 p-2 bg-green-50 border border-green-200 rounded-md">
           <Unlock className="h-4 w-4 text-green-600" />
           <span className="text-sm text-green-700">
-            Authenticated as: <strong>{authenticatedUser.full_name}</strong>
+            Authorized to sign as: <strong>{authenticatedUser.full_name}</strong>
+            {authenticatedUser.role === "ceo" && (
+              <span className="ml-2 text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">
+                CEO - Can sign from any account
+              </span>
+            )}
           </span>
           <Badge variant="outline" className="text-green-700 border-green-300">
-            {authenticatedUser.role}
+            {authenticatedUser.role.toUpperCase()}
           </Badge>
         </div>
       )}

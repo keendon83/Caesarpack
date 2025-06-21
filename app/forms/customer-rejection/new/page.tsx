@@ -1,8 +1,14 @@
 import { CustomerRejectionForm } from "@/components/customer-rejection-form"
-import { getCurrentUser } from "@/app/actions" // Keep this import for the dummy user
+import { getCurrentUser } from "@/app/actions"
+import { redirect } from "next/navigation"
 
 export default async function NewCustomerRejectionPage() {
-  const user = await getCurrentUser() // This will now return the dummy user
+  const user = await getCurrentUser()
+
+  // If no user is authenticated, redirect to login
+  if (!user) {
+    redirect("/login")
+  }
 
   return (
     <div className="container mx-auto py-8">

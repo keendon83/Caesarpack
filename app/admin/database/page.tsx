@@ -5,7 +5,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { getDatabaseStatus, initializeDatabase } from "@/app/actions"
+import { getDatabaseStatus, initializeDatabase, addCeoRoleToEnum } from "@/app/actions"
 import { useToast } from "@/hooks/use-toast"
 import { Loader2, Database, CheckCircle, XCircle, RefreshCw } from "lucide-react"
 
@@ -29,6 +29,7 @@ export default function DatabasePage() {
   const [loading, setLoading] = useState(true)
   const [initializing, setInitializing] = useState(false)
   const { toast } = useToast()
+  const [addingCeoRole, setAddingCeoRole] = useState(false)
 
   const fetchStatus = async () => {
     setLoading(true)
@@ -76,6 +77,34 @@ export default function DatabasePage() {
     setInitializing(false)
   }
 
+  const handleAddCeoRole = async () => {
+    setAddingCeoRole(true)
+    try {
+      const result = await addCeoRoleToEnum()
+      if (result.error) {
+        toast({
+          title: "Error",
+          description: result.error,
+          variant: "destructive",
+        })
+      } else {
+        toast({
+          title: "Success",
+          description: "CEO role added to database successfully!",
+        })
+        // Refresh status after adding role
+        await fetchStatus()
+      }
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to add CEO role",
+        variant: "destructive",
+      })
+    }
+    setAddingCeoRole(false)
+  }
+
   useEffect(() => {
     fetchStatus()
   }, [])
@@ -100,6 +129,10 @@ export default function DatabasePage() {
           <Button onClick={fetchStatus} variant="outline">
             <RefreshCw className="mr-2 h-4 w-4" />
             Refresh
+          </Button>
+          <Button onClick={handleAddCeoRole} disabled={addingCeoRole} variant="outline">
+            {addingCeoRole && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Add CEO Role
           </Button>
           <Button onClick={handleInitializeDatabase} disabled={initializing}>
             {initializing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

@@ -23,7 +23,7 @@ interface User {
 }
 
 const companies = ["Caesarpack Holdings", "Caesarpac Kuwait", "KuwaitBoxes", "Caesarpac Iraq"]
-const roles = ["admin", "employee"]
+const roles = ["admin", "employee", "ceo"]
 
 export default function UsersPage() {
   const [users, setUsers] = useState<User[]>([])
@@ -171,7 +171,19 @@ export default function UsersPage() {
                 <TableCell>{user.username}</TableCell>
                 <TableCell>{user.email}</TableCell>
                 <TableCell>{user.company}</TableCell>
-                <TableCell>{user.role}</TableCell>
+                <TableCell>
+                  <span
+                    className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                      user.role === "admin"
+                        ? "bg-red-100 text-red-800"
+                        : user.role === "ceo"
+                          ? "bg-purple-100 text-purple-800"
+                          : "bg-gray-100 text-gray-800"
+                    }`}
+                  >
+                    {user.role.toUpperCase()}
+                  </span>
+                </TableCell>
                 <TableCell className="text-right">
                   <Button variant="ghost" size="icon" onClick={() => handleEditUser(user)}>
                     <Edit className="h-4 w-4" />
@@ -276,7 +288,7 @@ export default function UsersPage() {
                 <SelectContent>
                   {roles.map((role) => (
                     <SelectItem key={role} value={role}>
-                      {role}
+                      {role.charAt(0).toUpperCase() + role.slice(1)}
                     </SelectItem>
                   ))}
                 </SelectContent>

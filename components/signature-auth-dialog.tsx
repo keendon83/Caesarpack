@@ -34,9 +34,9 @@ export function SignatureAuthDialog({ open, onOpenChange, onAuthSuccess }: Signa
       if (result.error) {
         setError(result.error)
       } else if (result.user) {
-        // Check if user has signing privileges (admin role)
-        if (result.user.role !== "admin") {
-          setError("Only administrators can sign forms.")
+        // Check if user has signing privileges (admin or ceo role)
+        if (result.user.role !== "admin" && result.user.role !== "ceo") {
+          setError("Only administrators and CEOs can sign forms.")
         } else {
           onAuthSuccess(result.user)
           onOpenChange(false)
@@ -72,7 +72,11 @@ export function SignatureAuthDialog({ open, onOpenChange, onAuthSuccess }: Signa
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <p className="text-sm text-muted-foreground">
-              Please authenticate to enable the signature pad. Only authorized personnel can sign forms.
+              Please authenticate to enable the signature pad. Only authorized personnel (administrators and CEOs) can
+              sign forms.
+            </p>
+            <p className="text-xs text-muted-foreground bg-blue-50 p-2 rounded border">
+              <strong>Note:</strong> CEOs can sign forms from any user account by providing their own credentials here.
             </p>
           </div>
 

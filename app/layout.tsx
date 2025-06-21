@@ -20,13 +20,14 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode
 }>) {
-  const currentUser = await getCurrentUser() // Keep this for now, it returns a dummy user
+  const currentUser = await getCurrentUser()
 
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={inter.className}>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-          {currentUser ? ( // Now only check for currentUser (dummy user)
+          {currentUser ? (
+            // Authenticated user - show full app layout
             <div className="flex min-h-screen w-full flex-col">
               <Header user={currentUser} />
               <div className="flex flex-1">
@@ -35,6 +36,7 @@ export default async function RootLayout({
               </div>
             </div>
           ) : (
+            // No authenticated user - show login page or public content
             children
           )}
         </ThemeProvider>
