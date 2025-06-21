@@ -1,8 +1,28 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { getCurrentUser } from "@/app/actions" // Keep this import for the dummy user
+import { getCurrentUser } from "@/app/actions"
+
+// Make this route dynamic since it uses cookies
+export const dynamic = "force-dynamic"
 
 export default async function DashboardPage() {
-  const user = await getCurrentUser() // This will now return the dummy user
+  const user = await getCurrentUser()
+
+  // Handle case where user might be null
+  if (!user) {
+    return (
+      <div className="grid gap-4 md:gap-8">
+        <Card>
+          <CardHeader>
+            <CardTitle>Authentication Required</CardTitle>
+            <CardDescription>Please log in to access the dashboard.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p>You need to be logged in to view this page.</p>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
 
   return (
     <div className="grid gap-4 md:gap-8 lg:grid-cols-2 xl:grid-cols-3">

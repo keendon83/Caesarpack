@@ -15,12 +15,22 @@ export const metadata: Metadata = {
     generator: 'v0.dev'
 }
 
+// Make the layout dynamic since it uses cookies
+export const dynamic = "force-dynamic"
+
 export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode
 }>) {
-  const currentUser = await getCurrentUser()
+  let currentUser = null
+
+  try {
+    currentUser = await getCurrentUser()
+  } catch (error) {
+    console.error("Error getting current user in layout:", error)
+    // Continue with null user - the individual pages will handle authentication
+  }
 
   return (
     <html lang="en" suppressHydrationWarning>

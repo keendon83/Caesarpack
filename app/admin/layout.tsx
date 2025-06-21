@@ -2,8 +2,17 @@ import { getCurrentUser } from "@/app/actions"
 import { redirect } from "next/navigation"
 import type React from "react"
 
+// Make this route dynamic since it uses cookies
+export const dynamic = "force-dynamic"
+
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  const user = await getCurrentUser()
+  let user = null
+
+  try {
+    user = await getCurrentUser()
+  } catch (error) {
+    console.error("Error getting current user in admin layout:", error)
+  }
 
   // Check if user is authenticated
   if (!user) {

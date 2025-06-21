@@ -613,7 +613,7 @@ export async function signOut() {
   redirect("/login")
 }
 
-// UPDATED: Enhanced debugging for getCurrentUser
+// UPDATED: Enhanced error handling for getCurrentUser
 export async function getCurrentUser() {
   try {
     const cookieStore = await cookies()
@@ -628,6 +628,7 @@ export async function getCurrentUser() {
     }
   } catch (error) {
     console.error("Error getting user from session:", error)
+    // Don't throw the error, just return null
   }
 
   // Return null if no valid session found

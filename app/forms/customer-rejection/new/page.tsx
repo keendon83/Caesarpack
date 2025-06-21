@@ -2,8 +2,17 @@ import { CustomerRejectionForm } from "@/components/customer-rejection-form"
 import { getCurrentUser } from "@/app/actions"
 import { redirect } from "next/navigation"
 
+// Make this route dynamic since it uses cookies
+export const dynamic = "force-dynamic"
+
 export default async function NewCustomerRejectionPage() {
-  const user = await getCurrentUser()
+  let user = null
+
+  try {
+    user = await getCurrentUser()
+  } catch (error) {
+    console.error("Error getting current user:", error)
+  }
 
   // If no user is authenticated, redirect to login
   if (!user) {

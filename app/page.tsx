@@ -1,8 +1,17 @@
 import { redirect } from "next/navigation"
 import { getCurrentUser } from "./actions"
 
+// Make this route dynamic since it uses cookies
+export const dynamic = "force-dynamic"
+
 export default async function HomePage() {
-  const user = await getCurrentUser()
+  let user = null
+
+  try {
+    user = await getCurrentUser()
+  } catch (error) {
+    console.error("Error getting current user on home page:", error)
+  }
 
   if (user) {
     // User is authenticated, redirect to dashboard
