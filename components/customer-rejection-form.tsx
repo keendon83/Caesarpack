@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
-import { SignaturePad } from "@/components/signature-pad"
+import { AuthenticatedSignaturePad } from "@/components/authenticated-signature-pad"
 import { CompanyLogo } from "@/components/company-logo"
 import { Loader2, Download, Lock, Unlock, Edit, Trash2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
@@ -100,7 +100,7 @@ export function CustomerRejectionForm({
   }
 
   const handleSignatureSave = (dataUrl: string) => {
-    setFormData((prev) => ({ ...prev, signature: dataUrl }))
+    setFormData((prev) => ({ ...prev, [name]: dataUrl }))
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -617,17 +617,15 @@ export function CustomerRejectionForm({
 
           <h3 className="text-lg font-semibold mt-6 mb-2">CEO Approval</h3>
           <div className="flex flex-col items-center gap-4">
-            <SignaturePad
+            <AuthenticatedSignaturePad
               onSave={handleSignatureSave}
               initialSignature={formData.signature}
-              readOnly={isLocked || !isCEO} // Read-only if locked or not CEO
+              readOnly={propReadOnly}
+              isLocked={isLocked}
+              signedByUser={initialData?.signed_by_user}
+              signedAt={initialData?.signed_at}
               className="border border-gray-300 rounded-md"
             />
-            {isLocked && initialData?.signed_by_user?.full_name && (
-              <p className="text-sm text-muted-foreground">
-                Signed by: {initialData.signed_by_user.full_name} on {new Date(initialData.signed_at).toLocaleString()}
-              </p>
-            )}
           </div>
         </CardContent>
         <CardFooter className="flex justify-end gap-2">

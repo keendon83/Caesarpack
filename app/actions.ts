@@ -8,6 +8,54 @@ import { cookies } from "next/headers"
 
 const saltRounds = 10
 
+// --- Signature Authentication Function ---
+export async function authenticateForSignature(username: string, password: string) {
+  console.log("Signature authentication attempt for username:", username)
+
+  try {
+    // Find user in database
+    const [user] = await sql`
+      SELECT id, full_name, username, email, password_hash, company, role 
+      FROM public.users 
+      WHERE username = ${username};
+    `
+
+    if (!user) {
+      console.log("User not found for signature authentication:", username)
+      return { error: "Invalid username or password." }
+    }
+
+    // Verify password
+    const passwordMatch = await bcrypt.compare(password, user.password_hash)
+    if (!passwordMatch) {
+      console.log("Invalid password for signature authentication:", username)
+      return { error: "Invalid username or password." }
+    }
+
+    // Check if user has admin role (can sign forms)
+    if (user.role !== "admin") {
+      console.log("User does not have admin privileges for signing:", username)
+      return { error: "Only administrators can sign forms." }
+    }
+
+    console.log("Signature authentication successful for:", user.full_name)
+
+    return {
+      user: {
+        id: user.id,
+        username: user.username,
+        full_name: user.full_name,
+        email: user.email,
+        company: user.company,
+        role: user.role,
+      },
+    }
+  } catch (error: any) {
+    console.error("Error during signature authentication:", error)
+    return { error: "Authentication failed. Please try again." }
+  }
+}
+
 // --- Database Status Functions ---
 export async function getDatabaseStatus() {
   try {
@@ -363,47 +411,45 @@ export async function updateUser(
   try {
     const updateFields: string[] = []
     const updateValues: any[] = []
-    let paramIndex = 1
 
     if (userData.full_name !== undefined) {
-      updateFields.push(`full_name = $${paramIndex++}`)
-      updateValues.push(userData.full_name)
+      updateFields.push(`full_name = '${userData.full_name}'`)
     }
     if (userData.username !== undefined) {
-      updateFields.push(`username = $${paramIndex++}`)
-      updateValues.push(userData.username)
+      updateFields.push(`username = '${userData.username}'`)
     }
     if (userData.email !== undefined) {
-      updateFields.push(`email = $${paramIndex++}`)
-      updateValues.push(userData.email)
+      updateFields.push(`email = '${userData.email}'`)
     }
     if (userData.password !== undefined && userData.password !== "") {
       const password_hash = await bcrypt.hash(userData.password, saltRounds)
-      updateFields.push(`password_hash = $${paramIndex++}`)
-      updateValues.push(password_hash)
+      updateFields.push(`password_hash = '${password_hash}'`)
     }
     if (userData.company !== undefined) {
-      updateFields.push(`company = $${paramIndex++}::company_enum`)
-      updateValues.push(userData.company)
+      updateFields.push(`company = '${userData.company}'::company_enum`)
     }
     if (userData.role !== undefined) {
-      updateFields.push(`role = $${paramIndex++}::user_role_enum`)
-      updateValues.push(userData.role)
+      updateFields.push(`role = '${userData.role}'::user_role_enum`)
     }
 
     if (updateFields.length === 0) {
       return { data: null, error: "No fields to update." }
     }
 
-    const query = `
+    // Use template literal with sql`` instead of sql.unsafe
+    const updateQuery = `
       UPDATE public.users
       SET ${updateFields.join(", ")}
-      WHERE id = $${paramIndex++}
+      WHERE id = '${id}'
       RETURNING id, full_name, username, email, company, role;
     `
-    updateValues.push(id)
 
-    const [updatedUser] = await sql.unsafe(query, updateValues)
+    console.log("Update query:", updateQuery)
+
+    const result = await sql.unsafe(updateQuery)
+    const updatedUser = Array.isArray(result) ? result[0] : result
+
+    console.log("Update result:", updatedUser)
 
     revalidatePath("/admin/users")
     return { data: updatedUser }
