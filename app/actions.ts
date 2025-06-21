@@ -4,6 +4,7 @@ import { redirect } from "next/navigation"
 import { sql } from "@/lib/db" // Import the Neon client
 import bcrypt from "bcryptjs"
 import { revalidatePath } from "next/cache"
+import { cookies } from "next/headers"
 
 const saltRounds = 10
 
@@ -183,22 +184,97 @@ export async function initializeDatabase() {
   }
 }
 
-// --- Auth Actions (Placeholders for NextAuth.js) ---
+// --- Auth Actions (Temporary implementation) ---
 export async function signIn(formData: FormData) {
-  console.log("Sign In action (placeholder)")
-  // In a real NextAuth.js setup, this would handle authentication
-  redirect("/dashboard")
+  const username = formData.get("username") as string
+  const password = formData.get("password") as string
+
+  console.log("Sign In attempt for username:", username)
+
+  // Don't wrap redirect in try-catch to avoid catching the redirect error
+  let shouldRedirect = false
+  let userToStore = null
+
+  try {
+    // Try to find user in database
+    const [user] = await sql`
+      SELECT id, full_name, username, email, password_hash, company, role 
+      FROM public.users 
+      WHERE username = ${username};
+    `
+
+    if (user) {
+      // Verify password
+      const passwordMatch = await bcrypt.compare(password, user.password_hash)
+      if (passwordMatch) {
+        userToStore = {
+          id: user.id,
+          username: user.username,
+          full_name: user.full_name,
+          email: user.email,
+          company: user.company,
+          role: user.role,
+        }
+        console.log("Login successful for:", user.full_name)
+        shouldRedirect = true
+      } else {
+        console.log("Invalid password for user:", username)
+        shouldRedirect = true // For now, still redirect (temporary)
+      }
+    } else {
+      console.log("User not found:", username)
+      shouldRedirect = true // For now, still redirect (temporary)
+    }
+  } catch (error) {
+    console.error("Error during database query:", error)
+    shouldRedirect = true // For now, still redirect (temporary)
+  }
+
+  // Set session cookie if user authenticated successfully
+  if (userToStore) {
+    try {
+      const cookieStore = await cookies()
+      cookieStore.set("user_session", JSON.stringify(userToStore), {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 60 * 60 * 24 * 7, // 7 days
+      })
+    } catch (cookieError) {
+      console.error("Error setting cookie:", cookieError)
+    }
+  }
+
+  // Redirect outside of try-catch block
+  if (shouldRedirect) {
+    redirect("/dashboard")
+  }
 }
 
 export async function signOut() {
-  console.log("Sign Out action (placeholder)")
-  // In a real NextAuth.js setup, this would handle session invalidation
+  console.log("Sign Out action")
+  const cookieStore = await cookies()
+  cookieStore.delete("user_session")
   redirect("/login")
 }
 
 export async function getCurrentUser() {
-  // TEMPORARY: Return a dummy user for now.
-  // This will be replaced with actual user fetching from NextAuth.js and Neon.
+  try {
+    const cookieStore = await cookies()
+    const userSession = cookieStore.get("user_session")
+
+    if (userSession) {
+      const user = JSON.parse(userSession.value)
+      console.log("Retrieved user from session:", user.username)
+      return user
+    }
+  } catch (error) {
+    console.error("Error getting user from session:", error)
+  }
+
+  // TEMPORARY: Return a dummy user if no session found
+  // This ensures the app still works during development
+  console.log("No user session found, returning dummy user")
   return {
     id: "dummy-user-id",
     full_name: "Demo User",
@@ -397,24 +473,36 @@ export async function updateUserFormPermissions(userId: string, formIds: string[
 
 // --- Form Submission Actions (Now using Neon) ---
 export async function submitCustomerRejectionForm(formData: any) {
-  const currentUser = await getCurrentUser() // Still uses dummy user for now
+  const currentUser = await getCurrentUser()
+  console.log("submitCustomerRejectionForm - Current user:", currentUser)
 
   if (!currentUser) {
     return { error: "User not authenticated." }
   }
 
   try {
+    // First ensure the form exists
     const [formEntry] = await sql`SELECT id FROM public.forms WHERE slug = 'customer-rejection';`
+    console.log("Form entry found:", formEntry)
 
     if (!formEntry) {
       return { error: "Form not found." }
     }
 
+    console.log("Attempting to insert form submission with data:", {
+      user_id: currentUser.id,
+      form_id: formEntry.id,
+      company: currentUser.company,
+      submission_data: formData,
+    })
+
     const [newSubmission] = await sql`
       INSERT INTO public.form_submissions (user_id, form_id, company, submission_data)
       VALUES (${currentUser.id}, ${formEntry.id}, ${currentUser.company}::company_enum, ${JSON.stringify(formData)}::jsonb)
-      RETURNING id;
+      RETURNING id, created_at;
     `
+
+    console.log("Form submission created successfully:", newSubmission)
     revalidatePath("/forms/customer-rejection")
     return { data: newSubmission }
   } catch (error: any) {
@@ -424,20 +512,26 @@ export async function submitCustomerRejectionForm(formData: any) {
 }
 
 export async function getCustomerRejectionFormSubmissions() {
-  const currentUser = await getCurrentUser() // Still uses dummy user for now
+  const currentUser = await getCurrentUser()
+  console.log("getCustomerRejectionFormSubmissions - Current user:", currentUser)
 
   if (!currentUser) {
+    console.log("No current user found")
     return { error: "User not authenticated." }
   }
 
   try {
     const [formEntry] = await sql`SELECT id FROM public.forms WHERE slug = 'customer-rejection';`
+    console.log("Form entry for submissions:", formEntry)
 
     if (!formEntry) {
+      console.log("Form not found")
       return { error: "Form not found." }
     }
 
-    const query = sql`
+    console.log("Querying submissions for form_id:", formEntry.id)
+
+    const submissions = await sql`
       SELECT
         fs.id,
         fs.submission_data,
@@ -445,6 +539,7 @@ export async function getCustomerRejectionFormSubmissions() {
         fs.is_signed,
         fs.signed_at,
         fs.pdf_url,
+        fs.created_at,
         u.full_name AS user_full_name,
         u.company AS user_company,
         u.role AS user_role
@@ -454,29 +549,33 @@ export async function getCustomerRejectionFormSubmissions() {
       ORDER BY fs.created_at DESC;
     `
 
-    // NOTE: RLS will be handled by NextAuth.js and custom logic, not directly by Neon's client here.
-    // The current dummy user setup means all data will be fetched.
-    // We will implement proper filtering based on user role/company once NextAuth.js is integrated.
+    console.log("Raw submissions query result:", submissions)
 
-    const submissions = await query
-    return submissions.map((s: any) => ({
+    const formattedSubmissions = submissions.map((s: any) => ({
       ...s,
       users: { full_name: s.user_full_name, company: s.user_company, role: s.user_role },
     }))
+
+    console.log("Formatted submissions:", formattedSubmissions)
+    return formattedSubmissions
   } catch (error: any) {
     console.error("Error fetching form submissions from Neon:", error)
-    return []
+    return { error: error.message || "Failed to fetch submissions." }
   }
 }
 
 export async function getCustomerRejectionFormSubmission(id: string) {
-  const currentUser = await getCurrentUser() // Still uses dummy user for now
+  const currentUser = await getCurrentUser()
+  console.log("getCustomerRejectionFormSubmission - Current user:", currentUser)
+  console.log("getCustomerRejectionFormSubmission - Submission ID:", id)
 
   if (!currentUser) {
     return { error: "User not authenticated." }
   }
 
   try {
+    console.log("Querying for submission with ID:", id)
+
     const [submission] = await sql`
       SELECT
         fs.id,
@@ -485,6 +584,7 @@ export async function getCustomerRejectionFormSubmission(id: string) {
         fs.is_signed,
         fs.signed_at,
         fs.pdf_url,
+        fs.created_at,
         u.full_name AS user_full_name,
         u.company AS user_company,
         u.role AS user_role,
@@ -495,20 +595,23 @@ export async function getCustomerRejectionFormSubmission(id: string) {
       WHERE fs.id = ${id};
     `
 
+    console.log("Raw submission query result:", submission)
+
     if (!submission) {
+      console.log("No submission found with ID:", id)
       return { error: "Submission not found." }
     }
 
-    // NOTE: RLS will be handled by NextAuth.js and custom logic, not directly by Neon's client here.
-    // The current dummy user setup means all data will be fetched.
-    // We will implement proper filtering based on user role/company once NextAuth.js is integrated.
+    const formattedSubmission = {
+      ...submission,
+      users: { full_name: submission.user_full_name, company: submission.user_company, role: submission.user_role },
+      signed_by_user: submission.signed_by_user_full_name ? { full_name: submission.signed_by_user_full_name } : null,
+    }
+
+    console.log("Formatted submission:", formattedSubmission)
 
     return {
-      data: {
-        ...submission,
-        users: { full_name: submission.user_full_name, company: submission.user_company, role: submission.user_role },
-        signed_by_user: submission.signed_by_user_full_name ? { full_name: submission.signed_by_user_full_name } : null,
-      },
+      data: formattedSubmission,
     }
   } catch (error: any) {
     console.error("Error fetching single form submission from Neon:", error)
@@ -517,7 +620,7 @@ export async function getCustomerRejectionFormSubmission(id: string) {
 }
 
 export async function signCustomerRejectionForm(id: string, signatureData: string) {
-  const currentUser = await getCurrentUser() // Still uses dummy user for now
+  const currentUser = await getCurrentUser() // Now uses session-based user
 
   if (!currentUser || currentUser.role !== "admin") {
     return { error: "Unauthorized to sign this form." }

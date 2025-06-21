@@ -1,25 +1,26 @@
 import { CustomerRejectionForm } from "@/components/customer-rejection-form"
-import { getCurrentUser } from "@/app/actions" // Keep this import for the dummy user
+import { getCurrentUser, getCustomerRejectionFormSubmission } from "@/app/actions"
 
 export default async function ViewCustomerRejectionPage({ params }: { params: { id: string } }) {
-  const user = await getCurrentUser() // This will now return the dummy user
+  const user = await getCurrentUser()
+  const submissionResult = await getCustomerRejectionFormSubmission(params.id)
 
-  // Dummy submission data for now
-  const submission = {
-    id: params.id,
-    submission_data: {
-      serialNumber: "DUMMY-SN-123",
-      customerName: "Dummy Customer",
-      issueDate: "2024-01-01",
-      signature: null,
-    },
-    is_signed: false,
-    company: "Caesarpack Holdings",
-    users: { full_name: "Dummy Submitter" },
-    signed_by_user: null,
-    signed_at: null,
-    pdf_url: null,
+  console.log("ViewCustomerRejectionPage - Submission result:", submissionResult)
+
+  // Handle error case
+  if (submissionResult.error) {
+    return (
+      <div className="container mx-auto py-8">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-red-600 mb-4">Error Loading Form</h1>
+          <p className="text-muted-foreground mb-4">{submissionResult.error}</p>
+          <p className="text-sm text-muted-foreground">Form ID: {params.id}</p>
+        </div>
+      </div>
+    )
   }
+
+  const submission = submissionResult.data
 
   return (
     <div className="container mx-auto py-8">

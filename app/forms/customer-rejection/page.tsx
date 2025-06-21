@@ -3,10 +3,11 @@ import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
 import { PlusCircle, Eye } from "lucide-react"
+import { getCustomerRejectionFormSubmissions } from "@/app/actions"
 
 export default async function CustomerRejectionSubmissionsPage() {
-  // Dummy submissions data for now
-  const submissions: any[] = [] // No submissions until database is reconnected
+  // Fetch actual submissions from database
+  const submissions = await getCustomerRejectionFormSubmissions()
 
   return (
     <div className="container mx-auto py-8">
@@ -24,8 +25,15 @@ export default async function CustomerRejectionSubmissionsPage() {
           <CardTitle>All Submissions</CardTitle>
         </CardHeader>
         <CardContent>
-          {submissions.length === 0 ? (
-            <p className="text-center text-muted-foreground">No submissions found for this form.</p>
+          {!Array.isArray(submissions) || submissions.length === 0 ? (
+            <div className="text-center py-8">
+              <p className="text-muted-foreground mb-4">No submissions found for this form.</p>
+              <p className="text-sm text-muted-foreground">
+                {typeof submissions === "object" && submissions.error
+                  ? `Error: ${submissions.error}`
+                  : "Create your first submission using the button above."}
+              </p>
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <Table>
