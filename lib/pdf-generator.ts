@@ -47,7 +47,7 @@ export function generateCustomerRejectionPDF(submission: FormSubmissionData): js
     return y + lines.length * lineHeight
   }
 
-  // Header - simple without logo
+  // Header - simple text-only header
   pdf.setFillColor(240, 240, 240)
   pdf.rect(margin, yPosition, contentWidth, 25, "F")
 
