@@ -226,18 +226,23 @@ export async function getCustomerRejectionAnalytics(fromDate?: string, toDate?: 
         departments = ["Unspecified"]
       }
 
-      // Add to each responsible department
+      // Calculate the split amount per department
+      const splitAmount = departments.length > 0 ? discount / departments.length : discount
+
+      // Add to each responsible department with split amount
       for (const department of departments) {
         if (!departmentTotals[department]) {
           departmentTotals[department] = { total: 0, count: 0, submissions: [] }
         }
 
-        departmentTotals[department].total += discount
+        departmentTotals[department].total += splitAmount
         departmentTotals[department].count += 1
         departmentTotals[department].submissions.push({
           id: submission.id,
           created_at: submission.created_at,
-          total_discount: discount,
+          total_discount: splitAmount, // Show the split amount per department
+          original_total_discount: discount, // Keep track of original amount
+          split_count: departments.length, // Track how many departments this was split between
           serial_number: submission.submission_data?.serialNumber,
           customer_name: submission.submission_data?.customerName,
         })

@@ -22,6 +22,19 @@ import {
 import { useRouter } from "next/navigation"
 import { downloadCustomerRejectionPDF } from "@/lib/pdf-generator"
 
+// Helper function to format number with commas
+const formatNumberWithCommas = (value: string) => {
+  // Remove any non-digit characters except decimal point
+  const cleanValue = value.replace(/[^\d.]/g, "")
+  // Add commas for thousands separator
+  return cleanValue.replace(/\B(?=(\d{3})+(?!\d))/g, ",")
+}
+
+// Helper function to parse comma-formatted number back to plain number
+const parseFormattedNumber = (value: string) => {
+  return value.replace(/,/g, "")
+}
+
 interface CustomerRejectionFormProps {
   initialData?: any
   submissionId?: string
@@ -83,7 +96,24 @@ export function CustomerRejectionForm({
       const initializeForm = async () => {
         try {
           if (initialData?.submission_data) {
-            setFormData(initialData.submission_data)
+            const formattedData = {
+              ...initialData.submission_data,
+              // Format currency fields with commas when loading existing data
+              totalAmount: initialData.submission_data.totalAmount
+                ? formatNumberWithCommas(initialData.submission_data.totalAmount.toString())
+                : "",
+              totalDiscount: initialData.submission_data.totalDiscount
+                ? formatNumberWithCommas(initialData.submission_data.totalDiscount.toString())
+                : "",
+              // Format quantity fields with commas when loading existing data
+              quantityDelivered: initialData.submission_data.quantityDelivered
+                ? formatNumberWithCommas(initialData.submission_data.quantityDelivered.toString())
+                : "",
+              quantityReturned: initialData.submission_data.quantityReturned
+                ? formatNumberWithCommas(initialData.submission_data.quantityReturned.toString())
+                : "",
+            }
+            setFormData(formattedData)
             setIsLocked(initialData.is_signed || false)
           }
           await new Promise((resolve) => setTimeout(resolve, 100))
@@ -123,7 +153,19 @@ export function CustomerRejectionForm({
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target
-    setFormData((prev: any) => ({ ...prev, [name]: value }))
+
+    // Handle currency and quantity fields with comma formatting
+    if (
+      name === "totalAmount" ||
+      name === "totalDiscount" ||
+      name === "quantityDelivered" ||
+      name === "quantityReturned"
+    ) {
+      const formattedValue = formatNumberWithCommas(value)
+      setFormData((prev: any) => ({ ...prev, [name]: formattedValue }))
+    } else {
+      setFormData((prev: any) => ({ ...prev, [name]: value }))
+    }
   }
 
   const handleCheckboxChange = (group: string, option: string, checked: boolean) => {
@@ -150,11 +192,20 @@ export function CustomerRejectionForm({
     setIsSubmitting(true)
 
     try {
+      // Parse currency and quantity fields back to numbers for submission
+      const submissionData = {
+        ...formData,
+        totalAmount: formData.totalAmount ? parseFormattedNumber(formData.totalAmount) : "",
+        totalDiscount: formData.totalDiscount ? parseFormattedNumber(formData.totalDiscount) : "",
+        quantityDelivered: formData.quantityDelivered ? parseFormattedNumber(formData.quantityDelivered) : "",
+        quantityReturned: formData.quantityReturned ? parseFormattedNumber(formData.quantityReturned) : "",
+      }
+
       let result
       if (submissionId && isEditing) {
-        result = await updateCustomerRejectionFormSubmission(submissionId, formData)
+        result = await updateCustomerRejectionFormSubmission(submissionId, submissionData)
       } else {
-        result = await submitCustomerRejectionForm(formData)
+        result = await submitCustomerRejectionForm(submissionData)
       }
 
       if (result.error) {
@@ -501,7 +552,7 @@ export function CustomerRejectionForm({
               <Input
                 id="quantityDelivered"
                 name="quantityDelivered"
-                type="number"
+                type="text"
                 value={formData.quantityDelivered || ""}
                 onChange={handleInputChange}
                 readOnly={!canEdit}
@@ -512,7 +563,7 @@ export function CustomerRejectionForm({
               <Input
                 id="quantityReturned"
                 name="quantityReturned"
-                type="number"
+                type="text"
                 value={formData.quantityReturned || ""}
                 onChange={handleInputChange}
                 readOnly={!canEdit}
@@ -523,7 +574,7 @@ export function CustomerRejectionForm({
               <Input
                 id="totalAmount"
                 name="totalAmount"
-                type="number"
+                type="text"
                 value={formData.totalAmount || ""}
                 onChange={handleInputChange}
                 readOnly={!canEdit}
@@ -534,7 +585,7 @@ export function CustomerRejectionForm({
               <Input
                 id="totalDiscount"
                 name="totalDiscount"
-                type="number"
+                type="text"
                 value={formData.totalDiscount || ""}
                 onChange={handleInputChange}
                 readOnly={!canEdit}

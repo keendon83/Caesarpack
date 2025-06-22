@@ -239,6 +239,12 @@ export default function FormsPage() {
                                   {((data.total / analytics.grandTotal) * 100).toFixed(1)}% of total
                                 </span>
                               </div>
+                              {/* Show split information if applicable */}
+                              {data.submissions.some((sub: any) => sub.split_count > 1) && (
+                                <div className="text-xs text-blue-600 mt-1">
+                                  * Includes split amounts from shared responsibility
+                                </div>
+                              )}
                               {/* Progress bar */}
                               <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
                                 <div
