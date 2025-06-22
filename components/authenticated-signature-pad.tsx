@@ -1,5 +1,7 @@
 "use client"
 
+import type React from "react"
+
 import { useState } from "react"
 import { SignaturePad } from "@/components/signature-pad"
 import { SignatureAuthDialog } from "@/components/signature-auth-dialog"
@@ -58,6 +60,13 @@ export function AuthenticatedSignaturePad({
     if (isAuthenticated && authenticatedUser) {
       onSave(dataUrl)
     }
+  }
+
+  const handleAuthButtonClick = (e: React.MouseEvent) => {
+    // Prevent the button from submitting the form
+    e.preventDefault()
+    e.stopPropagation()
+    setShowAuthDialog(true)
   }
 
   const canSign = isAuthenticated && !isLocked && !readOnly
@@ -127,7 +136,7 @@ export function AuthenticatedSignaturePad({
       {/* Authentication Instructions */}
       {!isAuthenticated && !isLocked && !readOnly && (
         <div className="text-center">
-          <Button variant="outline" onClick={() => setShowAuthDialog(true)} className="flex items-center gap-2">
+          <Button type="button" variant="outline" onClick={handleAuthButtonClick} className="flex items-center gap-2">
             <Lock className="h-4 w-4" />
             Authenticate to Sign
           </Button>

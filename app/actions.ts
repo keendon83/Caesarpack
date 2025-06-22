@@ -843,22 +843,7 @@ export async function submitCustomerRejectionForm(formData: any) {
       return { error: "Form not found." }
     }
 
-    // REMOVED: Duplicate check - customers can have multiple rejections
-    // Only check for exact duplicates if both serial number AND customer name AND date are the same
-    if (formData.serialNumber && formData.customerName && formData.issueDate) {
-      const existingSubmission = await sql`
-        SELECT id FROM public.form_submissions 
-        WHERE form_id = ${formEntry.id}
-        AND submission_data->>'serialNumber' = ${formData.serialNumber}
-        AND submission_data->>'customerName' = ${formData.customerName}
-        AND submission_data->>'issueDate' = ${formData.issueDate}
-        LIMIT 1;
-      `
-
-      if (existingSubmission.length > 0) {
-        return { error: "A submission with this exact serial number, customer name, and issue date already exists." }
-      }
-    }
+    // REMOVED: Duplicate check - allow all submissions regardless of duplicates
 
     console.log("Attempting to insert form submission with data:", {
       user_id: currentUser.id,
