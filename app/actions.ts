@@ -838,18 +838,20 @@ export async function submitCustomerRejectionForm(formData: any) {
       return { error: "Form not found." }
     }
 
-    // Check for existing submission with same serial number and customer name to prevent duplicates
-    if (formData.serialNumber && formData.customerName) {
+    // REMOVED: Duplicate check - customers can have multiple rejections
+    // Only check for exact duplicates if both serial number AND customer name AND date are the same
+    if (formData.serialNumber && formData.customerName && formData.issueDate) {
       const existingSubmission = await sql`
         SELECT id FROM public.form_submissions 
         WHERE form_id = ${formEntry.id}
         AND submission_data->>'serialNumber' = ${formData.serialNumber}
         AND submission_data->>'customerName' = ${formData.customerName}
+        AND submission_data->>'issueDate' = ${formData.issueDate}
         LIMIT 1;
       `
 
       if (existingSubmission.length > 0) {
-        return { error: "A submission with this serial number and customer name already exists." }
+        return { error: "A submission with this exact serial number, customer name, and issue date already exists." }
       }
     }
 

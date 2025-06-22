@@ -47,17 +47,25 @@ export function generateCustomerRejectionPDF(submission: FormSubmissionData): js
     return y + lines.length * lineHeight
   }
 
-  // Header
+  // Header - simple without logo
   pdf.setFillColor(240, 240, 240)
   pdf.rect(margin, yPosition, contentWidth, 25, "F")
 
+  // Title and company info
   yPosition += 8
-  addText("Customer Complaint / Rejected Order", margin + 5, yPosition, { fontSize: 16, bold: true })
+  addText("Customer Complaint / Rejected Order", margin + 10, yPosition, { fontSize: 16, bold: true })
   yPosition += 6
-  addText("CP-RJ-01", margin + 5, yPosition, { fontSize: 10 })
+
+  // Form code based on company
+  const formCode = submission.company === "Caesarpac Iraq" ? "BAK-RJ-01" : "CP-RJ-01"
+  addText(formCode, margin + 10, yPosition, { fontSize: 10 })
   yPosition += 6
-  addText(`Company: ${submission.company}`, margin + 5, yPosition, { fontSize: 10 })
-  yPosition += 15
+
+  // Company name with special handling for Caesarpac Iraq
+  const companyDisplayName =
+    submission.company === "Caesarpac Iraq" ? "Balad Al Khair For Carton Products" : submission.company
+  addText(`Company: ${companyDisplayName}`, margin + 10, yPosition, { fontSize: 10 })
+  yPosition += 10
 
   // Basic Information Section
   addText("BASIC INFORMATION", margin, yPosition, { fontSize: 12, bold: true })
@@ -252,7 +260,7 @@ export function generateCustomerRejectionPDF(submission: FormSubmissionData): js
 export function downloadCustomerRejectionPDF(submission: FormSubmissionData) {
   const pdf = generateCustomerRejectionPDF(submission)
 
-  // Generate filename
+  // Generate filename with company-specific prefix
   const currentDate = new Date().toISOString().split("T")[0]
   const customerName = submission.submission_data?.customerName
     ? submission.submission_data.customerName.replace(/[^a-zA-Z0-9]/g, "_")
@@ -261,7 +269,9 @@ export function downloadCustomerRejectionPDF(submission: FormSubmissionData) {
     ? submission.submission_data.serialNumber.replace(/[^a-zA-Z0-9]/g, "_")
     : submission.id.slice(0, 8)
 
-  const filename = `CP-RJ-01_${customerName}_${serialNumber}_${currentDate}.pdf`
+  // Use different prefix for Caesarpac Iraq
+  const formPrefix = submission.company === "Caesarpac Iraq" ? "BAK-RJ-01" : "CP-RJ-01"
+  const filename = `${formPrefix}_${customerName}_${serialNumber}_${currentDate}.pdf`
 
   // Download the PDF
   pdf.save(filename)

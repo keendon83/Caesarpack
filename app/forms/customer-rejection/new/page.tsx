@@ -11,7 +11,8 @@ export default async function NewCustomerRejectionPage() {
   try {
     user = await getCurrentUser()
   } catch (error) {
-    console.error("Error getting current user:", error)
+    console.error("Error getting current user in new form page:", error)
+    // Don't redirect immediately, let the component handle it
   }
 
   // If no user is authenticated, redirect to login

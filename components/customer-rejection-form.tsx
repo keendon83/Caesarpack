@@ -23,10 +23,10 @@ import { useRouter } from "next/navigation"
 import { downloadCustomerRejectionPDF } from "@/lib/pdf-generator"
 
 interface CustomerRejectionFormProps {
-  initialData?: any // For editing/viewing existing submissions
-  submissionId?: string // For existing submissions
-  currentUser: any // Current authenticated user
-  readOnly?: boolean // To control form editability
+  initialData?: any
+  submissionId?: string
+  currentUser: any
+  readOnly?: boolean
 }
 
 const causeOfComplaintOptions = [
@@ -57,57 +57,47 @@ export function CustomerRejectionForm({
   currentUser,
   readOnly: propReadOnly = false,
 }: CustomerRejectionFormProps) {
-  const [formData, setFormData] = useState<any>(initialData || {})
+  // Initialize with empty object to prevent undefined access
+  const [formData, setFormData] = useState<any>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isSigning, setIsSigning] = useState(false)
   const [isUnlocking, setIsUnlocking] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false)
-  const [isLocked, setIsLocked] = useState(initialData?.is_signed || false)
-  const [isEditing, setIsEditing] = useState(false) // State for admin editing
-  const [authenticatedSigner, setAuthenticatedSigner] = useState<any>(null) // Store authenticated signer
-  const [isLoading, setIsLoading] = useState(true) // Add loading state
+  const [isLocked, setIsLocked] = useState(false)
+  const [isEditing, setIsEditing] = useState(false)
+  const [authenticatedSigner, setAuthenticatedSigner] = useState<any>(null)
+  const [isLoading, setIsLoading] = useState(false) // Only show loading for existing forms
   const { toast } = useToast()
   const router = useRouter()
-  const formRef = useRef<HTMLDivElement>(null) // Ref for the form content to be exported
+  const formRef = useRef<HTMLDivElement>(null)
 
   const canSign = currentUser?.role === "admin" || currentUser?.role === "ceo"
   const canEdit = !isLocked || (canSign && isEditing)
-  const currentCompany = currentUser?.company || "Caesarpack Holdings" // Default for placeholder
+  const currentCompany = currentUser?.company || "Caesarpack Holdings"
 
+  // Only run initialization effect for existing submissions
   useEffect(() => {
-    // Simulate loading and initialize form
-    const initializeForm = async () => {
-      try {
-        if (initialData) {
-          setFormData(initialData.submission_data)
-          setIsLocked(initialData.is_signed)
+    if (initialData) {
+      setIsLoading(true)
+      const initializeForm = async () => {
+        try {
+          if (initialData?.submission_data) {
+            setFormData(initialData.submission_data)
+            setIsLocked(initialData.is_signed || false)
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100))
+        } catch (error) {
+          console.error("Error initializing form:", error)
+        } finally {
+          setIsLoading(false)
         }
-        // Add a small delay to prevent flashing
-        await new Promise((resolve) => setTimeout(resolve, 100))
-      } catch (error) {
-        console.error("Error initializing form:", error)
-      } finally {
-        setIsLoading(false)
       }
+      initializeForm()
     }
-
-    initializeForm()
   }, [initialData])
 
-  // Show loading state
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="text-center">
-          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
-          <p className="text-muted-foreground">Loading form...</p>
-        </div>
-      </div>
-    )
-  }
-
-  // Show error if no current user (shouldn't happen due to page-level redirect)
+  // Early return if no current user
   if (!currentUser) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -119,13 +109,25 @@ export function CustomerRejectionForm({
     )
   }
 
+  // Show loading only for existing forms
+  if (isLoading && initialData) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
+          <p className="text-muted-foreground">Loading form...</p>
+        </div>
+      </div>
+    )
+  }
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target
-    setFormData((prev) => ({ ...prev, [name]: value }))
+    setFormData((prev: any) => ({ ...prev, [name]: value }))
   }
 
   const handleCheckboxChange = (group: string, option: string, checked: boolean) => {
-    setFormData((prev) => {
+    setFormData((prev: any) => {
       const currentGroup = prev[group] || []
       if (checked) {
         return { ...prev, [group]: [...currentGroup, option] }
@@ -136,45 +138,53 @@ export function CustomerRejectionForm({
   }
 
   const handleSignatureSave = (dataUrl: string) => {
-    setFormData((prev) => ({ ...prev, signature: dataUrl }))
+    setFormData((prev: any) => ({ ...prev, signature: dataUrl }))
   }
 
-  // Handle authentication success from signature pad
   const handleAuthSuccess = (user: any) => {
     setAuthenticatedSigner(user)
-    console.log("Authenticated signer set:", user)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsSubmitting(true)
 
-    let result
-    if (submissionId && isEditing) {
-      result = await updateCustomerRejectionFormSubmission(submissionId, formData)
-    } else {
-      result = await submitCustomerRejectionForm(formData)
-    }
+    try {
+      let result
+      if (submissionId && isEditing) {
+        result = await updateCustomerRejectionFormSubmission(submissionId, formData)
+      } else {
+        result = await submitCustomerRejectionForm(formData)
+      }
 
-    if (result.error) {
+      if (result.error) {
+        toast({
+          title: "Error",
+          description: result.error,
+          variant: "destructive",
+        })
+      } else {
+        toast({
+          title: "Success",
+          description: `Form ${submissionId ? "updated" : "submitted"} successfully.`,
+        })
+        if (!submissionId && result.data?.id) {
+          router.push(`/forms/customer-rejection/${result.data.id}`)
+        } else if (submissionId) {
+          setIsEditing(false)
+          router.refresh()
+        }
+      }
+    } catch (error) {
+      console.error("Error submitting form:", error)
       toast({
         title: "Error",
-        description: result.error,
+        description: "An unexpected error occurred while submitting the form.",
         variant: "destructive",
       })
-    } else {
-      toast({
-        title: "Success",
-        description: `Form ${submissionId ? "updated" : "submitted"} successfully.`,
-      })
-      if (!submissionId) {
-        router.push(`/forms/customer-rejection/${result.data.id}`)
-      } else {
-        setIsEditing(false) // Exit edit mode after saving
-        router.refresh() // Revalidate data
-      }
+    } finally {
+      setIsSubmitting(false)
     }
-    setIsSubmitting(false)
   }
 
   const handleSignForm = async () => {
@@ -203,27 +213,34 @@ export function CustomerRejectionForm({
       return
     }
 
-    console.log("Signing form with authenticated signer:", authenticatedSigner)
-
     setIsSigning(true)
-    const result = await signCustomerRejectionForm(submissionId, formData.signature, authenticatedSigner.id)
-    if (result.error) {
+    try {
+      const result = await signCustomerRejectionForm(submissionId, formData.signature, authenticatedSigner.id)
+      if (result.error) {
+        toast({
+          title: "Error",
+          description: result.error,
+          variant: "destructive",
+        })
+      } else {
+        toast({
+          title: "Success",
+          description: result.message || "Form signed successfully!",
+        })
+        setIsLocked(true)
+        router.refresh()
+        await generateUnifiedPdf()
+      }
+    } catch (error) {
+      console.error("Error signing form:", error)
       toast({
         title: "Error",
-        description: result.error,
+        description: "An unexpected error occurred while signing the form.",
         variant: "destructive",
       })
-    } else {
-      toast({
-        title: "Success",
-        description: result.message || "Form signed successfully!",
-      })
-      setIsLocked(true)
-      router.refresh()
-      // Automatically generate PDF after signing using the unified generator
-      await generateUnifiedPdf()
+    } finally {
+      setIsSigning(false)
     }
-    setIsSigning(false)
   }
 
   const handleUnlockForm = async () => {
@@ -233,24 +250,34 @@ export function CustomerRejectionForm({
     }
 
     setIsUnlocking(true)
-    const result = await unlockCustomerRejectionForm(submissionId)
-    if (result.error) {
+    try {
+      const result = await unlockCustomerRejectionForm(submissionId)
+      if (result.error) {
+        toast({
+          title: "Error",
+          description: result.error,
+          variant: "destructive",
+        })
+      } else {
+        toast({
+          title: "Success",
+          description: "Form unlocked successfully.",
+        })
+        setIsLocked(false)
+        setIsEditing(true)
+        setAuthenticatedSigner(null)
+        router.refresh()
+      }
+    } catch (error) {
+      console.error("Error unlocking form:", error)
       toast({
         title: "Error",
-        description: result.error,
+        description: "An unexpected error occurred while unlocking the form.",
         variant: "destructive",
       })
-    } else {
-      toast({
-        title: "Success",
-        description: "Form unlocked successfully.",
-      })
-      setIsLocked(false)
-      setIsEditing(true) // Enter edit mode after unlocking
-      setAuthenticatedSigner(null) // Clear authenticated signer
-      router.refresh()
+    } finally {
+      setIsUnlocking(false)
     }
-    setIsUnlocking(false)
   }
 
   const handleDeleteForm = async () => {
@@ -260,24 +287,33 @@ export function CustomerRejectionForm({
     }
 
     setIsDeleting(true)
-    const result = await deleteCustomerRejectionFormSubmission(submissionId)
-    if (result.error) {
+    try {
+      const result = await deleteCustomerRejectionFormSubmission(submissionId)
+      if (result.error) {
+        toast({
+          title: "Error",
+          description: result.error,
+          variant: "destructive",
+        })
+      } else {
+        toast({
+          title: "Success",
+          description: "Form submission deleted.",
+        })
+        router.push("/forms/customer-rejection")
+      }
+    } catch (error) {
+      console.error("Error deleting form:", error)
       toast({
         title: "Error",
-        description: result.error,
+        description: "An unexpected error occurred while deleting the form.",
         variant: "destructive",
       })
-    } else {
-      toast({
-        title: "Success",
-        description: "Form submission deleted.",
-      })
-      router.push("/forms/customer-rejection") // Redirect to list
+    } finally {
+      setIsDeleting(false)
     }
-    setIsDeleting(false)
   }
 
-  // UPDATED: Use the unified PDF generator
   const generateUnifiedPdf = async () => {
     if (!submissionId) return
 
@@ -289,7 +325,6 @@ export function CustomerRejectionForm({
     })
 
     try {
-      // Create submission object in the format expected by the PDF generator
       const submissionForPdf = {
         id: submissionId,
         submission_data: formData,
@@ -319,6 +354,14 @@ export function CustomerRejectionForm({
     }
   }
 
+  const getFormCode = () => {
+    return currentCompany === "Caesarpac Iraq" ? "BAK-RJ-01" : "CP-RJ-01"
+  }
+
+  const getCompanyDisplayName = () => {
+    return currentCompany === "Caesarpac Iraq" ? "Balad Al Khair For Carton Products" : currentCompany
+  }
+
   return (
     <Card className="w-full max-w-4xl mx-auto">
       <CardHeader className="flex flex-row items-center justify-between">
@@ -326,12 +369,14 @@ export function CustomerRejectionForm({
           <CompanyLogo companyName={currentCompany} className="h-12 w-auto" />
           <div>
             <CardTitle className="text-2xl">Customer Complaint / Rejected Order</CardTitle>
-            <p className="text-sm text-muted-foreground">CP-RJ-01</p>
+            <p className="text-sm text-muted-foreground">{getFormCode()}</p>
+            {currentCompany === "Caesarpac Iraq" && (
+              <p className="text-xs text-muted-foreground">{getCompanyDisplayName()}</p>
+            )}
           </div>
         </div>
         {submissionId && (
-          <div className="flex gap-2 relative z-50">
-            {/* Manual PDF Generation Button - Available for signed forms */}
+          <div className="flex gap-2">
             {isLocked && (
               <Button onClick={generateUnifiedPdf} disabled={isGeneratingPdf} variant="outline">
                 {isGeneratingPdf && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -361,12 +406,12 @@ export function CustomerRejectionForm({
       </CardHeader>
       <form onSubmit={handleSubmit}>
         <CardContent className="space-y-6 relative" ref={formRef}>
-          {/* FIXED: Moved watermark to only show in form content area, not over buttons */}
           {isLocked && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
               <div className="text-8xl font-bold text-gray-200 rotate-[-45deg] select-none">LOCKED</div>
             </div>
           )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <Label htmlFor="issueDate">Issue Date</Label>
@@ -393,7 +438,7 @@ export function CustomerRejectionForm({
             </div>
           </div>
 
-          <h3 className="text-lg font-semibold mt-6 mb-2">Customer's Details</h3>
+          <h3 className="text-lg font-semibold mt-6 mb-2">Customer Details</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <Label htmlFor="customerName">Customer Name / إسم العمیل</Label>
@@ -628,7 +673,7 @@ export function CustomerRejectionForm({
             />
           </div>
         </CardContent>
-        <CardFooter className="flex justify-end gap-2 relative z-50">
+        <CardFooter className="flex justify-end gap-2">
           {submissionId ? (
             <>
               {canEdit && (

@@ -6,6 +6,7 @@ import { ThemeProvider } from "@/components/theme-provider"
 import { Header } from "@/components/header"
 import { Sidebar } from "@/components/sidebar"
 import { getCurrentUser } from "./actions"
+import { Toaster } from "@/components/ui/toaster"
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -49,6 +50,7 @@ export default async function RootLayout({
             // No authenticated user - show login page or public content
             children
           )}
+          <Toaster />
         </ThemeProvider>
       </body>
     </html>
