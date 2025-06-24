@@ -40,8 +40,11 @@ export function AuthenticatedSignaturePad({
   const [showAuthDialog, setShowAuthDialog] = useState(false)
 
   const handleAuthSuccess = (user: any) => {
+    console.log("Authentication successful for signature pad:", user)
     setIsAuthenticated(true)
     setAuthenticatedUser(user)
+    setShowAuthDialog(false) // Explicitly close the dialog
+
     // Call the parent callback if provided
     if (onAuthSuccess) {
       onAuthSuccess(user)
@@ -63,6 +66,7 @@ export function AuthenticatedSignaturePad({
   }
 
   const handleAuthButtonClick = (e: React.MouseEvent) => {
+    console.log("Auth button clicked")
     // Prevent the button from submitting the form
     e.preventDefault()
     e.stopPropagation()

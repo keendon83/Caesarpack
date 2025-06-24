@@ -25,6 +25,7 @@ export function SignatureAuthDialog({ open, onOpenChange, onAuthSuccess }: Signa
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    e.stopPropagation() // Add this line to prevent event bubbling
     setIsAuthenticating(true)
     setError("")
 
@@ -115,7 +116,13 @@ export function SignatureAuthDialog({ open, onOpenChange, onAuthSuccess }: Signa
             <Button type="button" variant="outline" onClick={handleClose} disabled={isAuthenticating}>
               Cancel
             </Button>
-            <Button type="submit" disabled={isAuthenticating}>
+            <Button
+              type="submit"
+              disabled={isAuthenticating}
+              onClick={(e) => {
+                e.stopPropagation() // Prevent event bubbling
+              }}
+            >
               {isAuthenticating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Authenticate
             </Button>

@@ -183,8 +183,14 @@ export function CustomerRejectionForm({
     setFormData((prev: any) => ({ ...prev, signature: dataUrl }))
   }
 
+  // In the handleAuthSuccess function, add logging and ensure state is updated
   const handleAuthSuccess = (user: any) => {
+    console.log("CEO authentication successful in form:", user)
     setAuthenticatedSigner(user)
+    // Force a re-render to ensure the signature pad updates
+    setTimeout(() => {
+      console.log("Authentication state updated, signature pad should be active")
+    }, 100)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
