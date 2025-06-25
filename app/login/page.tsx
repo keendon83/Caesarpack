@@ -8,7 +8,17 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Loader2, Building2, AlertTriangle, CheckCircle, Settings, Wrench, Database, RefreshCw } from "lucide-react"
+import {
+  Loader2,
+  Building2,
+  AlertTriangle,
+  CheckCircle,
+  Settings,
+  Wrench,
+  Database,
+  RefreshCw,
+  ExternalLink,
+} from "lucide-react"
 import Link from "next/link"
 
 interface DatabaseStatus {
@@ -28,7 +38,6 @@ export default function LoginPage() {
   const [autoLoginAttempted, setAutoLoginAttempted] = useState(false)
   const [dbStatus, setDbStatus] = useState<DatabaseStatus | null>(null)
   const [statusLoading, setStatusLoading] = useState(true)
-  const [showDebugInfo, setShowDebugInfo] = useState(false)
   const router = useRouter()
 
   useEffect(() => {
@@ -38,10 +47,10 @@ export default function LoginPage() {
   useEffect(() => {
     if (!autoLoginAttempted && !statusLoading && dbStatus) {
       setAutoLoginAttempted(true)
-      // Only auto-login if there are no critical errors
+      // Auto-login after showing status
       setTimeout(() => {
         handleDemoLogin()
-      }, 1500)
+      }, 2000)
     }
   }, [autoLoginAttempted, statusLoading, dbStatus])
 
@@ -50,7 +59,7 @@ export default function LoginPage() {
 
     try {
       const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 15000) // 15 second timeout
+      const timeoutId = setTimeout(() => controller.abort(), 15000)
 
       const response = await fetch("/api/admin/health", {
         cache: "no-store",
@@ -69,24 +78,11 @@ export default function LoginPage() {
     } catch (error) {
       console.error("Health check failed:", error)
 
-      let errorMessage = "Health check failed"
-      let suggestion = "Demo mode is still available"
-
-      if (error instanceof Error) {
-        if (error.name === "AbortError") {
-          errorMessage = "Health check timed out after 15 seconds"
-          suggestion = "This indicates a serious connectivity issue. Try redeploying your application."
-        } else if (error.message.includes("Failed to fetch")) {
-          errorMessage = "Cannot reach health check API"
-          suggestion = "There may be a deployment or network connectivity issue."
-        }
-      }
-
       setDbStatus({
         healthy: false,
-        message: `${errorMessage}. Running in demo mode.`,
+        message: "Health check system error. Running in demo mode.",
         details: error instanceof Error ? error.message : "Unknown error",
-        suggestion: `${suggestion} You can still use the demo accounts below.`,
+        suggestion: "The health check system encountered an error. Demo accounts are still available.",
       })
     } finally {
       setStatusLoading(false)
@@ -144,6 +140,8 @@ export default function LoginPage() {
     setError("")
   }
 
+  const isPooledConnectionIssue = dbStatus?.debugInfo?.isPooled && dbStatus?.details?.includes("Failed to fetch")
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
       <Card className="w-full max-w-md">
@@ -160,34 +158,71 @@ export default function LoginPage() {
             <Alert className="mb-4 border-blue-200 bg-blue-50">
               <Loader2 className="h-4 w-4 text-blue-600 animate-spin" />
               <AlertDescription className="text-blue-800">
-                Checking system status... This may take a moment for first connection.
+                Checking database connection... This may take a moment.
               </AlertDescription>
             </Alert>
           ) : (
             dbStatus && (
               <Alert
                 className={`mb-4 ${
-                  dbStatus.healthy ? "border-green-200 bg-green-50" : "border-orange-200 bg-orange-50"
+                  dbStatus.healthy
+                    ? "border-green-200 bg-green-50"
+                    : isPooledConnectionIssue
+                      ? "border-red-200 bg-red-50"
+                      : "border-orange-200 bg-orange-50"
                 }`}
               >
                 {dbStatus.healthy ? (
                   <CheckCircle className="h-4 w-4 text-green-600" />
+                ) : isPooledConnectionIssue ? (
+                  <AlertTriangle className="h-4 w-4 text-red-600" />
                 ) : (
                   <Database className="h-4 w-4 text-orange-600" />
                 )}
-                <AlertDescription className={dbStatus.healthy ? "text-green-800" : "text-orange-800"}>
+                <AlertDescription
+                  className={
+                    dbStatus.healthy ? "text-green-800" : isPooledConnectionIssue ? "text-red-800" : "text-orange-800"
+                  }
+                >
                   <div className="space-y-2">
-                    <p className="font-semibold">{dbStatus.healthy ? "✅ Database Connected" : "⚠️ Demo Mode Active"}</p>
+                    <p className="font-semibold">
+                      {dbStatus.healthy
+                        ? "✅ Database Connected"
+                        : isPooledConnectionIssue
+                          ? "🔧 Pooled Connection Issue Detected"
+                          : "⚠️ Demo Mode Active"}
+                    </p>
                     <p className="text-xs">{dbStatus.message}</p>
 
-                    {dbStatus.details && (
+                    {isPooledConnectionIssue && (
+                      <div className="p-3 bg-red-100 rounded border border-red-200">
+                        <p className="text-xs font-semibold text-red-900 mb-2">🎯 SOLUTION NEEDED:</p>
+                        <p className="text-xs text-red-800 mb-2">
+                          You're using a POOLED connection which doesn't work in serverless environments.
+                        </p>
+                        <p className="text-xs text-red-800 font-medium">
+                          ➡️ Go to your Neon dashboard and copy the "Direct connection" string instead of "Pooled
+                          connection"
+                        </p>
+                        <a
+                          href="https://console.neon.tech"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center text-xs text-red-700 hover:text-red-900 mt-1"
+                        >
+                          Open Neon Dashboard <ExternalLink className="w-3 h-3 ml-1" />
+                        </a>
+                      </div>
+                    )}
+
+                    {dbStatus.details && !isPooledConnectionIssue && (
                       <details className="text-xs">
                         <summary className="cursor-pointer font-medium">Technical Details</summary>
                         <p className="mt-1 pl-2 border-l-2 border-orange-300 whitespace-pre-wrap">{dbStatus.details}</p>
                       </details>
                     )}
 
-                    {dbStatus.suggestion && (
+                    {dbStatus.suggestion && !isPooledConnectionIssue && (
                       <div className="text-xs p-2 bg-orange-100 rounded">
                         <strong>Suggestion:</strong> {dbStatus.suggestion}
                       </div>
@@ -196,9 +231,22 @@ export default function LoginPage() {
                     {dbStatus.debugInfo && (
                       <details className="text-xs">
                         <summary className="cursor-pointer font-medium">Debug Information</summary>
-                        <pre className="mt-1 p-2 bg-gray-100 rounded text-xs overflow-auto">
-                          {JSON.stringify(dbStatus.debugInfo, null, 2)}
-                        </pre>
+                        <div className="mt-1 p-2 bg-gray-100 rounded text-xs">
+                          <p>
+                            <strong>Connection Type:</strong> {dbStatus.debugInfo.connectionType}
+                          </p>
+                          <p>
+                            <strong>Is Pooled:</strong> {dbStatus.debugInfo.isPooled ? "Yes" : "No"}
+                          </p>
+                          <p>
+                            <strong>Has Client:</strong> {dbStatus.debugInfo.hasClient ? "Yes" : "No"}
+                          </p>
+                          {dbStatus.debugInfo.urlPrefix && (
+                            <p>
+                              <strong>URL:</strong> {dbStatus.debugInfo.urlPrefix}
+                            </p>
+                          )}
+                        </div>
                       </details>
                     )}
 

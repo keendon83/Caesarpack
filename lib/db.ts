@@ -8,11 +8,25 @@ const DATABASE_URLS = {
   POSTGRES_URL_NON_POOLING: process.env.POSTGRES_URL_NON_POOLING,
 }
 
+// Function to detect if a URL is pooled
+function isPooledConnection(url: string): boolean {
+  return url.includes("-pooler.") || url.includes("pooler") || url.includes("?pgbouncer=true")
+}
+
+// Function to suggest non-pooled alternative
+function suggestNonPooledUrl(url: string): string {
+  if (url.includes("-pooler.")) {
+    return url.replace("-pooler.", ".")
+  }
+  return "Use the 'Direct connection' string from your Neon dashboard instead of 'Pooled connection'"
+}
+
 // Log what we found (without exposing sensitive data)
 console.log("🔍 Environment variables check:")
 Object.entries(DATABASE_URLS).forEach(([key, value]) => {
   if (value) {
-    console.log(`✅ ${key}: ${value.substring(0, 20)}...${value.substring(value.length - 10)}`)
+    const isPooled = isPooledConnection(value)
+    console.log(`✅ ${key}: ${value.substring(0, 25)}... (${isPooled ? "POOLED" : "DIRECT"})`)
   } else {
     console.log(`❌ ${key}: not set`)
   }
@@ -27,6 +41,7 @@ const DATABASE_URL =
 
 let sql: any = null
 let sqlInitError: string | null = null
+let connectionType = "none"
 
 if (DATABASE_URL) {
   try {
@@ -35,8 +50,13 @@ if (DATABASE_URL) {
       throw new Error("DATABASE_URL must start with postgresql:// or postgres://")
     }
 
+    connectionType = isPooledConnection(DATABASE_URL) ? "pooled" : "direct"
     sql = neon(DATABASE_URL)
-    console.log(`✅ Neon client initialized successfully`)
+    console.log(`✅ Neon client initialized successfully (${connectionType} connection)`)
+
+    if (connectionType === "pooled") {
+      console.warn("⚠️ Using pooled connection - this may cause issues in serverless environments")
+    }
   } catch (error) {
     sqlInitError = error instanceof Error ? error.message : "Unknown initialization error"
     console.error("❌ Failed to initialize Neon client:", sqlInitError)
@@ -54,18 +74,12 @@ export function isDatabaseConfigured(): boolean {
 export function getDatabaseInfo() {
   return {
     hasUrl: !!DATABASE_URL,
-    urlType: DATABASE_URLS.DATABASE_URL_UNPOOLED
-      ? "non-pooled"
-      : DATABASE_URLS.POSTGRES_URL_NON_POOLING
-        ? "non-pooled"
-        : DATABASE_URLS.DATABASE_URL
-          ? "pooled"
-          : DATABASE_URLS.POSTGRES_URL
-            ? "pooled"
-            : "none",
+    connectionType,
     hasClient: !!sql,
     initError: sqlInitError,
     urlPrefix: DATABASE_URL ? DATABASE_URL.substring(0, 30) + "..." : "none",
+    isPooled: DATABASE_URL ? isPooledConnection(DATABASE_URL) : false,
+    suggestedUrl: DATABASE_URL && isPooledConnection(DATABASE_URL) ? suggestNonPooledUrl(DATABASE_URL) : null,
   }
 }
 
@@ -80,8 +94,8 @@ export async function checkDatabaseHealth() {
     return {
       healthy: false,
       message: "DATABASE_URL not configured. Running in demo mode.",
-      details: "No database URL found in environment variables. Check Vercel environment variables.",
-      suggestion: "Add DATABASE_URL to your Vercel project environment variables and redeploy.",
+      details: "No database URL found in environment variables.",
+      suggestion: "Add your Neon DATABASE_URL to environment variables and redeploy.",
       debugInfo: dbInfo,
     }
   }
@@ -92,7 +106,7 @@ export async function checkDatabaseHealth() {
       healthy: false,
       message: "Database client initialization failed. Running in demo mode.",
       details: `Neon client initialization error: ${sqlInitError}`,
-      suggestion: "Check if your DATABASE_URL format is correct. Try using a non-pooled connection string.",
+      suggestion: "Check if your DATABASE_URL format is correct.",
       debugInfo: dbInfo,
     }
   }
@@ -102,16 +116,21 @@ export async function checkDatabaseHealth() {
     return {
       healthy: false,
       message: "Database client not available. Running in demo mode.",
-      details: "The Neon SQL client could not be created despite having a DATABASE_URL.",
-      suggestion: "This might be an environment issue. Try redeploying your application.",
+      details: "The Neon SQL client could not be created.",
+      suggestion: "Try redeploying your application.",
       debugInfo: dbInfo,
     }
+  }
+
+  // Warn about pooled connections
+  if (dbInfo.isPooled) {
+    console.warn("⚠️ Attempting connection with pooled URL - this often fails in serverless environments")
   }
 
   try {
     console.log("🔌 Attempting database connection...")
 
-    // Test the actual database connection with a longer timeout for first connection
+    // Test the actual database connection
     const connectionTest = async () => {
       const startTime = Date.now()
       try {
@@ -134,7 +153,7 @@ export async function checkDatabaseHealth() {
     const result = await Promise.race([
       connectionTest(),
       new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Database connection timeout after 10 seconds")), 10000),
+        setTimeout(() => reject(new Error("Database connection timeout after 8 seconds")), 8000),
       ),
     ])
 
@@ -153,27 +172,32 @@ export async function checkDatabaseHealth() {
     let suggestion = "Please verify your DATABASE_URL and network settings."
 
     // Analyze the error type for better messaging
-    if (error instanceof TypeError) {
-      if (error.message.includes("Failed to fetch") || error.message.includes("fetch")) {
+    if (error instanceof TypeError && error.message.includes("Failed to fetch")) {
+      if (dbInfo.isPooled) {
+        message = "Pooled connection failed in serverless environment."
+        details = `Network fetch failed with pooled connection. Serverless environments often cannot use pooled connections. Error: ${details}`
+        suggestion = `🔧 SOLUTION: Use a DIRECT (non-pooled) connection string from your Neon dashboard. Look for "Direct connection" instead of "Pooled connection". ${dbInfo.suggestedUrl || ""}`
+      } else {
         message = "Network Error: Cannot reach database server."
-        details = `Network fetch failed. This often indicates the database URL is unreachable or there are network restrictions in the serverless environment. Error: ${details}`
+        details = `Network fetch failed with direct connection. This might indicate the database is unreachable or there are network restrictions. Error: ${details}`
         suggestion =
-          "1. Verify your DATABASE_URL is correct. 2. Try using a non-pooled connection string. 3. Ensure your Neon database is active. 4. Redeploy your Vercel application."
+          "1. Verify your database is active in Neon dashboard. 2. Check if the connection string is correct. 3. Try redeploying your application."
       }
     } else if (error instanceof Error) {
       if (error.message.includes("timeout")) {
         message = "Database connection timeout."
-        details = `Database did not respond within 10 seconds: ${details}`
-        suggestion =
-          "1. Check if your Neon database is active. 2. Try a non-pooled connection string. 3. Check for network latency issues."
+        details = `Database did not respond within 8 seconds: ${details}`
+        suggestion = dbInfo.isPooled
+          ? "Try using a direct (non-pooled) connection string from Neon dashboard."
+          : "Check if your Neon database is active and responsive."
       } else if (error.message.includes("authentication") || error.message.includes("password")) {
         message = "Database authentication failed."
         details = `Authentication error: ${details}`
-        suggestion = "Verify your username and password in the DATABASE_URL match your Neon database credentials."
+        suggestion = "Verify your username and password in the DATABASE_URL."
       } else if (error.message.includes("database") && error.message.includes("does not exist")) {
         message = "Database does not exist."
         details = `Database not found: ${details}`
-        suggestion = "Verify the database name in your DATABASE_URL matches your Neon database name."
+        suggestion = "Verify the database name in your DATABASE_URL."
       }
     }
 
